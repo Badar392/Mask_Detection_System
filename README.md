@@ -72,5 +72,3 @@ The trained model will be saved in the `model/` directory for use in the applica
 The model achieves high accuracy in distinguishing between masked and unmasked faces under varied lighting and angle conditions, making it suitable for real-world deployment scenarios such as public safety monitoring.
 
 
-
-This project is licensed under the MIT License.
