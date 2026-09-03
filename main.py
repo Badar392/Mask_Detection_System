@@ -192,7 +192,7 @@ hr { border-color:rgba(255,255,255,0.06) !important; }
 IMG_SIZE       = (160, 160)
 MODEL_PATH     = "face_mask_detector.keras"
 CLASS_NAMES    = ["WithMask", "WithoutMask"]     
-THRESHOLD      = 0.5                            
+THRESHOLD      = 0.5                             
 CONFIDENCE_THR = 0.70                            
 SMOOTH_FRAMES  = 5
 labels_dict    = {0: "Mask", 1: "No Mask"}
@@ -288,6 +288,56 @@ def detect_and_annotate(frame, model, face_cascade, history):
     return frame
 
 # ── Live video processor (streamlit-webrtc), loaded lazily ────────────────────
+def get_ice_servers():
+    """Build the ICE server list for WebRTC.
+
+    Streamlit Community Cloud's network setup blocks the direct peer-to-peer
+    path a plain STUN server relies on, so a TURN server (which relays the
+    actual media instead of just helping two peers find each other) is
+    required there -- this is the officially documented fix from the
+    streamlit-webrtc maintainer for this exact platform.
+
+    Priority:
+      1. Twilio TURN via st.secrets, if configured (most reliable).
+      2. Open Relay Project's free TURN server, using their publicly
+         documented static-auth shared secret (same mechanism used by
+         Nextcloud Talk) -- no signup or account required, so this works
+         regardless of country restrictions on services like Twilio.
+      3. STUN-only as a last resort (works outside Community Cloud, e.g.
+         locally, but likely won't establish a connection on Cloud alone).
+    """
+    try:
+        account_sid = st.secrets["TWILIO_ACCOUNT_SID"]
+        auth_token = st.secrets["TWILIO_AUTH_TOKEN"]
+        from twilio.rest import Client
+        client = Client(account_sid, auth_token)
+        token = client.tokens.create()
+        return token.ice_servers
+    except Exception:
+        pass
+
+    try:
+        import time, hmac, hashlib, base64
+        secret = "openrelayprojectsecret"  # Open Relay Project's public static-auth secret
+        username = str(int(time.time()) + 24 * 3600)  # valid for 24 hours
+        credential = base64.b64encode(
+            hmac.new(secret.encode(), username.encode(), hashlib.sha1).digest()
+        ).decode()
+        return [
+            {"urls": "stun:stun.l.google.com:19302"},
+            {
+                "urls": [
+                    "turn:staticauth.openrelay.metered.ca:80",
+                    "turn:staticauth.openrelay.metered.ca:443",
+                    "turns:staticauth.openrelay.metered.ca:443",
+                ],
+                "username": username,
+                "credential": credential,
+            },
+        ]
+    except Exception:
+        return [{"urls": ["stun:stun.l.google.com:19302"]}]
+
 @st.cache_resource(show_spinner=False)
 def get_webrtc_components():
     """Import streamlit-webrtc/av and build the processor class + RTC config
@@ -296,9 +346,7 @@ def get_webrtc_components():
     import av
     from streamlit_webrtc import webrtc_streamer, VideoProcessorBase, RTCConfiguration
 
-    rtc_configuration = RTCConfiguration(
-        {"iceServers": [{"urls": ["stun:stun.l.google.com:19302"]}]}
-    )
+    rtc_configuration = RTCConfiguration({"iceServers": get_ice_servers()})
 
     class MaskDetectionProcessor(VideoProcessorBase):
         def __init__(self):
