@@ -8,3 +8,4 @@ pillow==12.2.0
 opencv-python-headless==4.13.0.92
 streamlit-webrtc==0.47.1
 av==12.3.0
+pyarrow<25.0.0
