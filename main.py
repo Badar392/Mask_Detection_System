@@ -4,15 +4,7 @@ import numpy as np
 from tensorflow.keras.models import load_model
 from PIL import Image
 from collections import deque
-import av
-from streamlit_webrtc import webrtc_streamer, VideoProcessorBase, RTCConfiguration
 
-# STUN server so WebRTC can traverse NAT once deployed (e.g. Streamlit Community
-# Cloud) — without this, the browser and server usually can't find a direct
-# path to each other and the video stream never connects.
-RTC_CONFIGURATION = RTCConfiguration(
-    {"iceServers": [{"urls": ["stun:stun.l.google.com:19302"]}]}
-)
 
 # ── Page config ───────────────────────────────────────────────────────────────
 st.set_page_config(
@@ -299,25 +291,34 @@ def detect_and_annotate(frame, model, face_cascade, history):
                     cv2.FONT_HERSHEY_SIMPLEX, 0.75, color, 2, cv2.LINE_AA)
     return frame
 
-# ── Live video processor (streamlit-webrtc) ────────────────────────────────────
-# This runs server-side but receives the VIEWER'S browser camera over WebRTC —
-# unlike cv2.VideoCapture(0), which only ever reads a camera attached to the
-# machine running the Streamlit process. That distinction matters once this
-# app is deployed (e.g. Streamlit Community Cloud): the cloud server has no
-# camera of its own, so cv2.VideoCapture(0) would silently fail there, while
-# webrtc_streamer correctly pulls frames from whoever is visiting the site.
-class MaskDetectionProcessor(VideoProcessorBase):
-    def __init__(self):
-        # Cached loaders mean this is cheap even though __init__ can be called
-        # more than once per session (e.g. on reconnect).
-        self.model = load_mask_model()
-        self.face_cascade = load_face_cascade()
-        self.history = {}
+# ── Live video processor (streamlit-webrtc), loaded lazily ────────────────────
 
-    def recv(self, frame):
-        img = frame.to_ndarray(format="bgr24")
-        img = detect_and_annotate(img, self.model, self.face_cascade, self.history)
-        return av.VideoFrame.from_ndarray(img, format="bgr24")
+@st.cache_resource(show_spinner=False)
+def get_webrtc_components():
+    """Import streamlit-webrtc/av and build the processor class + RTC config
+    only once, and only when actually needed -- see note at the top of this
+    file on why these imports are deferred rather than done at module level."""
+    import av
+    from streamlit_webrtc import webrtc_streamer, VideoProcessorBase, RTCConfiguration
+
+    rtc_configuration = RTCConfiguration(
+        {"iceServers": [{"urls": ["stun:stun.l.google.com:19302"]}]}
+    )
+
+    class MaskDetectionProcessor(VideoProcessorBase):
+        def __init__(self):
+            # Cached loaders mean this is cheap even though __init__ can be
+            # called more than once per session (e.g. on reconnect).
+            self.model = load_mask_model()
+            self.face_cascade = load_face_cascade()
+            self.history = {}
+
+        def recv(self, frame):
+            img = frame.to_ndarray(format="bgr24")
+            img = detect_and_annotate(img, self.model, self.face_cascade, self.history)
+            return av.VideoFrame.from_ndarray(img, format="bgr24")
+
+    return webrtc_streamer, MaskDetectionProcessor, rtc_configuration
 
 # ── Hero ──────────────────────────────────────────────────────────────────────
 st.markdown("""
@@ -470,30 +471,58 @@ if model_loaded:
     # TAB 2 — WEBCAM (live, via streamlit-webrtc)
     # ════════════════════════════════════════════
     with tab_webcam:
+        if "webcam_enabled" not in st.session_state:
+            st.session_state.webcam_enabled = False
+
         col_ctrl, _, col_feed = st.columns([2, 0.3, 7])
 
         with col_ctrl:
             st.markdown('<div class="section-label">Controls</div>', unsafe_allow_html=True)
-            st.markdown("""
-            <div style="font-size:0.78rem;color:#4a6a7e;line-height:1.8;margin-bottom:0.8rem;">
-                Click <strong style="color:#00cccc;">START</strong> below and allow
-                camera access in your browser when prompted.
-            </div>""", unsafe_allow_html=True)
+
+            if not st.session_state.webcam_enabled:
+                st.markdown("""
+                <div style="font-size:0.78rem;color:#4a6a7e;line-height:1.8;margin-bottom:0.8rem;">
+                    Live detection loads a video engine on demand to keep the
+                    app lightweight for everyone who just uses image upload.
+                </div>""", unsafe_allow_html=True)
+                if st.button("🎥  Enable Live Webcam"):
+                    st.session_state.webcam_enabled = True
+                    st.rerun()
+            else:
+                st.markdown("""
+                <div style="font-size:0.78rem;color:#4a6a7e;line-height:1.8;margin-bottom:0.8rem;">
+                    Click <strong style="color:#00cccc;">START</strong> below and allow
+                    camera access in your browser when prompted.
+                </div>""", unsafe_allow_html=True)
 
         with col_feed:
             st.markdown('<div class="section-label">Camera Feed</div>', unsafe_allow_html=True)
 
-            webrtc_ctx = webrtc_streamer(
-                key="mask-detection",
-                video_processor_factory=MaskDetectionProcessor,
-                rtc_configuration=RTC_CONFIGURATION,
-                media_stream_constraints={"video": True, "audio": False},
-                async_processing=True,
-            )
+            if not st.session_state.webcam_enabled:
+                st.markdown("""
+                <div class="cam-placeholder">
+                    <div style="font-size:3rem;margin-bottom:0.8rem;">📷</div>
+                    <p style="font-family:'Syne',sans-serif;font-size:1rem;font-weight:600;color:#e8f4f8;margin:0 0 0.4rem;">
+                        Live webcam is not loaded yet
+                    </p>
+                    <p style="color:#4a6a7e;font-size:0.83rem;margin:0;">
+                        Click <strong style="color:#00cccc;">Enable Live Webcam</strong> to start
+                    </p>
+                </div>""", unsafe_allow_html=True)
+                webrtc_ctx = None
+            else:
+                webrtc_streamer, MaskDetectionProcessor, rtc_configuration = get_webrtc_components()
+                webrtc_ctx = webrtc_streamer(
+                    key="mask-detection",
+                    video_processor_factory=MaskDetectionProcessor,
+                    rtc_configuration=rtc_configuration,
+                    media_stream_constraints={"video": True, "audio": False},
+                    async_processing=True,
+                )
 
         with col_ctrl:
             st.markdown("<br>", unsafe_allow_html=True)
-            if webrtc_ctx.state.playing:
+            if webrtc_ctx is not None and webrtc_ctx.state.playing:
                 st.markdown('<div class="status-live"><span class="dot"></span> LIVE</div>', unsafe_allow_html=True)
             else:
                 st.markdown('<div style="display:inline-flex;align-items:center;gap:0.4rem;background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.1);border-radius:50px;padding:0.25rem 0.8rem;font-size:0.72rem;font-weight:600;color:#5a7a8e;text-transform:uppercase;letter-spacing:0.1em;">⏸ STOPPED</div>', unsafe_allow_html=True)
@@ -501,7 +530,8 @@ if model_loaded:
             st.markdown("""
             <div style="margin-top:1.4rem;font-size:0.78rem;color:#4a6a7e;line-height:1.8;">
                 <div style="color:#6a8fa8;font-weight:500;margin-bottom:0.3rem;">How to use</div>
-                Click <strong style="color:#00cccc;">START</strong> under the video<br>
+                Click <strong style="color:#00cccc;">Enable Live Webcam</strong> first<br>
+                Then click <strong style="color:#00cccc;">START</strong> under the video<br>
                 Allow camera access when your browser asks<br>
                 Face the camera clearly, good lighting helps<br>
                 Click <strong style="color:#00cccc;">STOP</strong> when done
