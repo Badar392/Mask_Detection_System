@@ -1,10 +1,12 @@
+import os
+os.environ.setdefault("TF_ENABLE_ONEDNN_OPTS", "0")
+
 import streamlit as st
 import cv2
 import numpy as np
 from tensorflow.keras.models import load_model
 from PIL import Image
 from collections import deque
-
 
 # ── Page config ───────────────────────────────────────────────────────────────
 st.set_page_config(
@@ -187,17 +189,11 @@ hr { border-color:rgba(255,255,255,0.06) !important; }
 """, unsafe_allow_html=True)
 
 # ── Constants ─────────────────────────────────────────────────────────────────
-# These MUST match the trained model exactly (see model_metadata / training notebook):
-#   - Input size: 160x160 (not 128x128)
-#   - Preprocessing: raw 0-255 float32, NO /255.0 — MobileNetV2 rescaling is
-#     baked into the model graph itself, so dividing here would double-normalize.
-#   - Output: a single sigmoid unit (probability of "WithoutMask"), not a
-#     2-class softmax — there is no argmax here, just a threshold comparison.
 IMG_SIZE       = (160, 160)
 MODEL_PATH     = "face_mask_detector.keras"
-CLASS_NAMES    = ["WithMask", "WithoutMask"]     # index 0 / index 1, matches training
-THRESHOLD      = 0.5                             # P(WithoutMask) >= THRESHOLD -> "No Mask"
-CONFIDENCE_THR = 0.70                            # below this, show "Uncertain" instead of a label
+CLASS_NAMES    = ["WithMask", "WithoutMask"]     
+THRESHOLD      = 0.5                            
+CONFIDENCE_THR = 0.70                            
 SMOOTH_FRAMES  = 5
 labels_dict    = {0: "Mask", 1: "No Mask"}
 color_bgr      = {0: (0, 210, 90), 1: (0, 60, 230)}
@@ -292,7 +288,6 @@ def detect_and_annotate(frame, model, face_cascade, history):
     return frame
 
 # ── Live video processor (streamlit-webrtc), loaded lazily ────────────────────
-
 @st.cache_resource(show_spinner=False)
 def get_webrtc_components():
     """Import streamlit-webrtc/av and build the processor class + RTC config
