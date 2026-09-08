@@ -1,591 +1,1187 @@
 import os
-os.environ.setdefault("TF_ENABLE_ONEDNN_OPTS", "0")
+
+os.environ["TF_ENABLE_ONEDNN_OPTS"] = "0"
+os.environ["TF_CPP_MIN_LOG_LEVEL"] = "2"
+
+# Limit TensorFlow thread usage on Streamlit Cloud
+os.environ["OMP_NUM_THREADS"] = "2"
+os.environ["TF_NUM_INTRAOP_THREADS"] = "2"
+os.environ["TF_NUM_INTEROP_THREADS"] = "2"
 
 import streamlit as st
 import cv2
 import numpy as np
-from tensorflow.keras.models import load_model
+
 from PIL import Image
 from collections import deque
 
-# ── Page config ───────────────────────────────────────────────────────────────
+from tensorflow.keras.models import load_model
+
+
+# ============================================================
+# PAGE CONFIGURATION
+# ============================================================
+
 st.set_page_config(
-    page_title="Mask Guard AI",
+    page_title="MaskGuard AI",
     page_icon="😷",
     layout="wide",
     initial_sidebar_state="collapsed",
 )
 
-# ── CSS ───────────────────────────────────────────────────────────────────────
-st.markdown("""
-<style>
-@import url('https://fonts.googleapis.com/css2?family=Syne:wght@400;600;700;800&family=DM+Sans:wght@300;400;500&display=swap');
 
-html, body, [data-testid="stAppViewContainer"] {
-    background: linear-gradient(135deg, #0a0f1e 0%, #0d1b2a 40%, #0f2336 70%, #091a28 100%);
-    min-height: 100vh;
-    font-family: 'DM Sans', sans-serif;
-}
-[data-testid="stAppViewContainer"]::before {
-    content:''; position:fixed; top:-40%; left:-20%; width:70%; height:70%;
-    background:radial-gradient(ellipse,rgba(0,200,200,0.07) 0%,transparent 70%);
-    pointer-events:none; z-index:0;
-}
-[data-testid="stAppViewContainer"]::after {
-    content:''; position:fixed; bottom:-30%; right:-10%; width:60%; height:60%;
-    background:radial-gradient(ellipse,rgba(56,100,240,0.07) 0%,transparent 70%);
-    pointer-events:none; z-index:0;
-}
-#MainMenu, footer, header { visibility:hidden; }
-[data-testid="stToolbar"] { display:none; }
-[data-testid="block-container"] {
-    padding:2rem 3rem !important; max-width:1100px; margin:auto;
-    position:relative; z-index:1;
-}
+# ============================================================
+# CUSTOM CSS
+# ============================================================
 
-/* Hero */
-.hero { text-align:center; padding:2rem 1rem 1.5rem; }
-.hero-badge {
-    display:inline-block; background:rgba(0,200,200,0.12);
-    border:1px solid rgba(0,200,200,0.3); color:#00cccc;
-    font-size:0.72rem; font-weight:500; letter-spacing:0.18em;
-    text-transform:uppercase; padding:0.3rem 1rem; border-radius:50px; margin-bottom:1rem;
-}
-.hero-title {
-    font-family:'Syne',sans-serif; font-size:clamp(2.2rem,5vw,3.5rem);
-    font-weight:800; color:#e8f4f8; line-height:1.1; margin:0 0 0.6rem; letter-spacing:-0.02em;
-}
-.hero-title span {
-    background:linear-gradient(90deg,#00cccc,#3864f0);
-    -webkit-background-clip:text; -webkit-text-fill-color:transparent; background-clip:text;
-}
-.hero-sub { font-size:1rem; font-weight:300; color:#6a8fa8; margin:0; }
+st.markdown(
+    """
+    <style>
 
-/* Tabs */
-[data-testid="stTabs"] { margin-top:1.5rem; }
-[data-testid="stTabs"] [role="tablist"] {
-    background:rgba(255,255,255,0.03) !important;
-    border:1px solid rgba(255,255,255,0.07) !important;
-    border-radius:14px !important; padding:0.3rem !important; gap:0.3rem !important;
-}
-[data-testid="stTabs"] button[role="tab"] {
-    font-family:'Syne',sans-serif !important; font-weight:600 !important;
-    font-size:0.88rem !important; color:#5a7a8e !important;
-    border-radius:10px !important; padding:0.55rem 1.4rem !important; border:none !important;
-}
-[data-testid="stTabs"] button[role="tab"][aria-selected="true"] {
-    background:linear-gradient(135deg,#00aaaa,#3864f0) !important;
-    color:white !important; box-shadow:0 4px 16px rgba(0,170,170,0.3) !important;
-}
-[data-testid="stTabPanel"] {
-    background:rgba(255,255,255,0.02) !important;
-    border:1px solid rgba(255,255,255,0.06) !important;
-    border-radius:16px !important; padding:1.8rem !important; margin-top:0.5rem !important;
-}
+    .stApp {
+        background:
+            radial-gradient(
+                circle at 20% 10%,
+                rgba(0, 200, 200, 0.08),
+                transparent 30%
+            ),
+            radial-gradient(
+                circle at 80% 20%,
+                rgba(0, 120, 255, 0.07),
+                transparent 30%
+            ),
+            #071116;
+        color: #e8f4f8;
+    }
 
-/* Glass card */
-.glass-card {
-    background:rgba(255,255,255,0.04); border:1px solid rgba(255,255,255,0.08);
-    border-radius:20px; padding:1.6rem; backdrop-filter:blur(12px);
-    box-shadow:0 8px 32px rgba(0,0,0,0.3);
-}
+    .hero {
+        padding: 2rem 0 1rem 0;
+        text-align: center;
+    }
 
-/* File uploader */
-[data-testid="stFileUploader"] {
-    background:rgba(255,255,255,0.03) !important;
-    border:2px dashed rgba(0,200,200,0.25) !important; border-radius:16px !important;
-    padding:1.5rem !important;
-}
-[data-testid="stFileUploader"]:hover {
-    border-color:rgba(0,200,200,0.55) !important; background:rgba(0,200,200,0.04) !important;
-}
-[data-testid="stFileUploadDropzone"] { background:transparent !important; }
+    .hero-badge {
+        display: inline-block;
+        padding: 0.35rem 0.8rem;
+        border-radius: 20px;
+        background: rgba(0, 200, 200, 0.10);
+        border: 1px solid rgba(0, 200, 200, 0.25);
+        color: #00cccc;
+        font-size: 0.75rem;
+        font-weight: 700;
+        letter-spacing: 1px;
+        text-transform: uppercase;
+    }
 
-/* Buttons */
-.stButton > button {
-    background:linear-gradient(135deg,#00aaaa,#3864f0) !important;
-    color:white !important; border:none !important; border-radius:12px !important;
-    font-family:'Syne',sans-serif !important; font-weight:600 !important;
-    font-size:0.92rem !important; padding:0.6rem 1.8rem !important;
-    box-shadow:0 4px 20px rgba(0,170,170,0.25) !important; width:100%;
-}
-.stButton > button:hover { opacity:0.88 !important; transform:translateY(-1px) !important; }
+    .hero-title {
+        font-size: 3.5rem;
+        font-weight: 800;
+        margin: 0.6rem 0;
+        color: #e8f4f8;
+    }
 
-/* Section label */
-.section-label {
-    font-family:'Syne',sans-serif; font-size:0.68rem; font-weight:600;
-    color:#00cccc; text-transform:uppercase; letter-spacing:0.18em; margin-bottom:0.7rem;
-}
+    .hero-title span {
+        color: #00cccc;
+    }
 
-/* Stat boxes */
-.stat-row { display:flex; gap:0.5rem; margin-top:0.7rem; }
-.stat-box {
-    flex:1; background:rgba(255,255,255,0.03); border:1px solid rgba(255,255,255,0.07);
-    border-radius:14px; padding:0.9rem 1rem; text-align:center;
-}
-.stat-val { font-family:'Syne',sans-serif; font-size:1.3rem; font-weight:700; color:#00cccc; }
-.stat-key { font-size:0.7rem; color:#5a7a8e; text-transform:uppercase; letter-spacing:0.1em; margin-top:0.15rem; }
+    .hero-sub {
+        color: #6a8fa8;
+        font-size: 1rem;
+    }
 
-/* Result badges */
-.result-safe {
-    display:flex; align-items:center; gap:0.8rem;
-    background:rgba(0,210,140,0.1); border:1.5px solid rgba(0,210,140,0.35);
-    border-radius:14px; padding:1.1rem 1.4rem; margin-bottom:1rem;
-}
-.result-danger {
-    display:flex; align-items:center; gap:0.8rem;
-    background:rgba(255,75,90,0.1); border:1.5px solid rgba(255,75,90,0.35);
-    border-radius:14px; padding:1.1rem 1.4rem; margin-bottom:1rem;
-}
-.rlabel { font-family:'Syne',sans-serif; font-size:1.2rem; font-weight:700; }
-.rsub   { font-size:0.8rem; margin-top:0.1rem; }
-.safe-text  { color:#00d28c; }
-.danger-text{ color:#ff4b5a; }
-.safe-sub   { color:#4dba8c; }
-.danger-sub { color:#cc3d4a; }
+    .section-label {
+        color: #00cccc;
+        font-size: 0.75rem;
+        font-weight: 700;
+        letter-spacing: 1.5px;
+        text-transform: uppercase;
+        margin-bottom: 0.8rem;
+    }
 
-/* Confidence track */
-.conf-track {
-    width:100%; height:8px; background:rgba(255,255,255,0.08);
-    border-radius:99px; overflow:hidden;
+    .glass-card {
+        padding: 1.5rem;
+        border-radius: 18px;
+        background: rgba(255,255,255,0.025);
+        border: 1px solid rgba(255,255,255,0.08);
+    }
+
+    .status-card {
+        padding: 1rem;
+        border-radius: 14px;
+        background: rgba(0, 200, 200, 0.05);
+        border: 1px solid rgba(0, 200, 200, 0.15);
+        margin-top: 1rem;
+    }
+
+    </style>
+    """,
+    unsafe_allow_html=True,
+)
+
+
+# ============================================================
+# CONFIGURATION
+# ============================================================
+
+IMG_SIZE = (160, 160)
+
+MODEL_PATH = "face_mask_detector.keras"
+
+CLASS_NAMES = [
+    "WithMask",
+    "WithoutMask",
+]
+
+THRESHOLD = 0.50
+CONFIDENCE_THR = 0.70
+
+SMOOTH_FRAMES = 5
+
+INFERENCE_EVERY_N_FRAMES = 4
+
+# Maximum width used for processing webcam frames
+MAX_PROCESS_WIDTH = 640
+
+labels_dict = {
+    0: "Mask",
+    1: "No Mask",
 }
 
-/* Image border */
-[data-testid="stImage"] img {
-    border-radius:14px !important; border:1px solid rgba(255,255,255,0.08) !important;
+color_bgr = {
+    0: (0, 210, 90),
+    1: (0, 60, 230),
 }
 
-/* Status pill */
-.status-live {
-    display:inline-flex; align-items:center; gap:0.4rem;
-    background:rgba(0,210,140,0.12); border:1px solid rgba(0,210,140,0.3);
-    border-radius:50px; padding:0.25rem 0.8rem;
-    font-size:0.72rem; font-weight:600; color:#00d28c;
-    text-transform:uppercase; letter-spacing:0.1em;
-}
-.dot {
-    width:7px; height:7px; border-radius:50%; background:#00d28c;
-    display:inline-block; animation:blink 1.2s infinite;
-}
-@keyframes blink { 0%,100%{opacity:1} 50%{opacity:0.2} }
 
-/* Webcam placeholder */
-.cam-placeholder {
-    text-align:center; padding:3.5rem 2rem;
-    background:rgba(255,255,255,0.02); border:1px solid rgba(255,255,255,0.06);
-    border-radius:16px;
-}
+# ============================================================
+# MODEL LOADER
+# ============================================================
 
-/* Tips */
-.tips {
-    text-align:center; margin-top:1.5rem; padding:0.9rem;
-    background:rgba(255,255,255,0.02); border-radius:12px;
-    border:1px solid rgba(255,255,255,0.05); color:#4a6a7e; font-size:0.83rem;
-}
-.tips strong { color:#00cccc; }
-.stSpinner > div { border-top-color:#00cccc !important; }
-hr { border-color:rgba(255,255,255,0.06) !important; }
-</style>
-""", unsafe_allow_html=True)
-
-# ── Constants ─────────────────────────────────────────────────────────────────
-IMG_SIZE       = (160, 160)
-MODEL_PATH     = "face_mask_detector.keras"
-CLASS_NAMES    = ["WithMask", "WithoutMask"]     
-THRESHOLD      = 0.5                             
-CONFIDENCE_THR = 0.70                            
-SMOOTH_FRAMES  = 5
-labels_dict    = {0: "Mask", 1: "No Mask"}
-color_bgr      = {0: (0, 210, 90), 1: (0, 60, 230)}
-
-# ── Cached loaders ────────────────────────────────────────────────────────────
 @st.cache_resource(show_spinner=False)
 def load_mask_model():
-    m = load_model(MODEL_PATH)
-    m.predict(np.zeros((1, *IMG_SIZE, 3), dtype="float32"), verbose=0)
-    return m
+
+    model = load_model(
+        MODEL_PATH,
+        compile=False
+    )
+
+    # Warm-up once
+    dummy = np.zeros(
+        (1, IMG_SIZE[0], IMG_SIZE[1], 3),
+        dtype=np.float32
+    )
+
+    model.predict(
+        dummy,
+        verbose=0
+    )
+
+    return model
+
+
+# ============================================================
+# FACE CASCADE
+# ============================================================
 
 @st.cache_resource(show_spinner=False)
 def load_face_cascade():
-    return cv2.CascadeClassifier(
-        cv2.data.haarcascades + "haarcascade_frontalface_default.xml"
+
+    cascade_path = cv2.data.haarcascades + (
+        "haarcascade_frontalface_default.xml"
     )
 
-# ── Helpers ───────────────────────────────────────────────────────────────────
-def predict_image(model, image_rgb_np):
-    """Returns P(WithoutMask) as a single float in [0, 1]."""
-    inp = cv2.resize(image_rgb_np, IMG_SIZE).astype("float32")  # raw 0-255, no /255
-    prob_without_mask = float(model.predict(np.expand_dims(inp, axis=0), verbose=0)[0][0])
-    return prob_without_mask
+    cascade = cv2.CascadeClassifier(cascade_path)
+
+    if cascade.empty():
+        raise RuntimeError(
+            "Could not load OpenCV Haar Cascade."
+        )
+
+    return cascade
+
+
+# ============================================================
+# MODEL PREPROCESSING
+# ============================================================
 
 def preprocess_face(face_bgr):
-    face_rgb = cv2.cvtColor(face_bgr, cv2.COLOR_BGR2RGB)
-    face_rgb = cv2.resize(face_rgb, IMG_SIZE).astype("float32")  # raw 0-255, no /255
+
+    face_rgb = cv2.cvtColor(
+        face_bgr,
+        cv2.COLOR_BGR2RGB
+    )
+
+    face_rgb = cv2.resize(
+        face_rgb,
+        IMG_SIZE,
+        interpolation=cv2.INTER_AREA
+    )
+
+    face_rgb = face_rgb.astype(
+        np.float32
+    )
+
     return face_rgb
 
-def detect_largest_face(image_rgb, face_cascade):
-    """Detect faces in a full RGB image (not a pre-cropped face) and return the
-    padded (x1, y1, x2, y2) box of the largest one — the same style of crop
-    used for webcam frames and for the Kaggle training images themselves.
-    Returns None if no face is found."""
-    gray = cv2.equalizeHist(cv2.cvtColor(image_rgb, cv2.COLOR_RGB2GRAY))
-    faces = face_cascade.detectMultiScale(gray, scaleFactor=1.1, minNeighbors=6, minSize=(60, 60))
+
+# ============================================================
+# IMAGE PREDICTION
+# ============================================================
+
+def predict_face(model, face_bgr):
+
+    processed = preprocess_face(
+        face_bgr
+    )
+
+    batch = np.expand_dims(
+        processed,
+        axis=0
+    )
+
+    prediction = model.predict(
+        batch,
+        verbose=0
+    )
+
+    probability_without_mask = float(
+        prediction[0][0]
+    )
+
+    return probability_without_mask
+
+
+# ============================================================
+# FACE DETECTION
+# ============================================================
+
+def detect_largest_face(
+    image_rgb,
+    face_cascade
+):
+
+    gray = cv2.cvtColor(
+        image_rgb,
+        cv2.COLOR_RGB2GRAY
+    )
+
+    gray = cv2.equalizeHist(gray)
+
+    faces = face_cascade.detectMultiScale(
+        gray,
+        scaleFactor=1.1,
+        minNeighbors=6,
+        minSize=(60, 60)
+    )
+
     if len(faces) == 0:
         return None
-    x, y, w, h = max(faces, key=lambda f: f[2] * f[3])  # largest detected face
-    pad = int(max(w, h) * 0.10)
-    x1, y1 = max(0, x - pad), max(0, y - pad)
-    x2, y2 = min(image_rgb.shape[1], x + w + pad), min(image_rgb.shape[0], y + h + pad)
-    return (x1, y1, x2, y2)
 
-def detect_and_annotate(frame, model, face_cascade, history):
-    gray  = cv2.equalizeHist(cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY))
-    faces = face_cascade.detectMultiScale(gray, scaleFactor=1.1, minNeighbors=6, minSize=(60, 60))
+    x, y, w, h = max(
+        faces,
+        key=lambda f: f[2] * f[3]
+    )
+
+    pad = int(
+        max(w, h) * 0.10
+    )
+
+    x1 = max(0, x - pad)
+    y1 = max(0, y - pad)
+
+    x2 = min(
+        image_rgb.shape[1],
+        x + w + pad
+    )
+
+    y2 = min(
+        image_rgb.shape[0],
+        y + h + pad
+    )
+
+    return (
+        x1,
+        y1,
+        x2,
+        y2
+    )
+
+
+# ============================================================
+# WEBCAM FRAME RESIZING
+# ============================================================
+
+def resize_for_processing(frame):
+
+    height, width = frame.shape[:2]
+
+    if width <= MAX_PROCESS_WIDTH:
+        return frame, 1.0
+
+    scale = (
+        MAX_PROCESS_WIDTH / float(width)
+    )
+
+    new_width = MAX_PROCESS_WIDTH
+
+    new_height = int(
+        height * scale
+    )
+
+    resized = cv2.resize(
+        frame,
+        (new_width, new_height),
+        interpolation=cv2.INTER_AREA
+    )
+
+    return resized, scale
+
+
+# ============================================================
+# LIVE FACE DETECTION + MASK PREDICTION
+# ============================================================
+
+def detect_and_annotate(
+    frame,
+    model,
+    face_cascade,
+    history,
+    frame_counter,
+    cached_predictions
+):
+
+    # --------------------------------------------------------
+    # Resize webcam frame
+    # --------------------------------------------------------
+
+    processed_frame, scale = (
+        resize_for_processing(frame)
+    )
+
+    gray = cv2.cvtColor(
+        processed_frame,
+        cv2.COLOR_BGR2GRAY
+    )
+
+    gray = cv2.equalizeHist(gray)
+
+    # --------------------------------------------------------
+    # Detect faces
+    # --------------------------------------------------------
+
+    faces = face_cascade.detectMultiScale(
+        gray,
+        scaleFactor=1.1,
+        minNeighbors=6,
+        minSize=(60, 60)
+    )
 
     if len(faces) == 0:
+
         history.clear()
+        cached_predictions.clear()
+
+        cv2.putText(
+            frame,
+            "No face detected",
+            (20, 40),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.8,
+            (255, 255, 255),
+            2,
+            cv2.LINE_AA
+        )
+
         return frame
 
-    fl, _ = cv2.groupRectangles(faces.tolist() * 2, 1, 0.2)
-    if len(fl) == 0:
-        return frame
+    # --------------------------------------------------------
+    # Remove duplicate detections
+    # --------------------------------------------------------
 
-    crops, regions = [], []
-    for (x, y, w, h) in fl:
-        pad = int(max(w, h) * 0.10)
-        x1, y1 = max(0, x-pad), max(0, y-pad)
-        x2, y2 = min(frame.shape[1], x+w+pad), min(frame.shape[0], y+h+pad)
-        crop = frame[y1:y2, x1:x2]
+    try:
+
+        grouped_faces, _ = cv2.groupRectangles(
+            faces.tolist() * 2,
+            1,
+            0.2
+        )
+
+        if len(grouped_faces) == 0:
+            grouped_faces = faces
+
+    except Exception:
+
+        grouped_faces = faces
+
+    # --------------------------------------------------------
+    # Determine whether this frame should run inference
+    # --------------------------------------------------------
+
+    run_inference = (
+        frame_counter % INFERENCE_EVERY_N_FRAMES == 0
+        or not cached_predictions
+    )
+
+    current_predictions = []
+
+    # --------------------------------------------------------
+    # Process each detected face
+    # --------------------------------------------------------
+
+    for face_index, (x, y, w, h) in enumerate(
+        grouped_faces
+    ):
+
+        pad = int(
+            max(w, h) * 0.10
+        )
+
+        x1 = max(
+            0,
+            x - pad
+        )
+
+        y1 = max(
+            0,
+            y - pad
+        )
+
+        x2 = min(
+            processed_frame.shape[1],
+            x + w + pad
+        )
+
+        y2 = min(
+            processed_frame.shape[0],
+            y + h + pad
+        )
+
+        crop = processed_frame[
+            y1:y2,
+            x1:x2
+        ]
+
         if crop.size == 0:
             continue
-        crops.append(preprocess_face(crop))
-        regions.append((x1, y1, x2, y2))
 
-    if not crops:
-        return frame
+        # ----------------------------------------------------
+        # Create stable face key
+        # ----------------------------------------------------
 
-    # Single sigmoid output per face -> shape (N, 1); flatten to (N,) of P(WithoutMask)
-    preds = model.predict(np.stack(crops), verbose=0)[:, 0]
+        key = (
+            round(x1 / 40),
+            round(y1 / 40),
+            round(w / 40),
+            round(h / 40)
+        )
 
-    for i, (x1, y1, x2, y2) in enumerate(regions):
-        key = (round(x1/50), round(y1/50))
-        if key not in history:
-            history[key] = deque(maxlen=SMOOTH_FRAMES)
-        history[key].append(preds[i])
+        # ----------------------------------------------------
+        # Run model only when necessary
+        # ----------------------------------------------------
 
-        avg_prob_without_mask = float(np.mean(history[key]))
-        label = int(avg_prob_without_mask >= THRESHOLD)
-        conf  = avg_prob_without_mask if label == 1 else 1.0 - avg_prob_without_mask
+        if run_inference:
 
-        if conf < CONFIDENCE_THR:
-            text, color = f"Uncertain {conf*100:.0f}%", (0, 165, 255)
+            try:
+
+                probability = predict_face(
+                    model,
+                    crop
+                )
+
+                cached_predictions[key] = (
+                    probability
+                )
+
+            except Exception:
+
+                probability = (
+                    cached_predictions.get(
+                        key,
+                        0.5
+                    )
+                )
+
         else:
-            text, color = f"{labels_dict[label]}  {conf*100:.0f}%", color_bgr[label]
 
-        cv2.rectangle(frame, (x1, y1), (x2, y2), color, 2)
-        cv2.putText(frame, text, (x1, y1-10),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.75, color, 2, cv2.LINE_AA)
+            probability = (
+                cached_predictions.get(
+                    key,
+                    0.5
+                )
+            )
+
+        current_predictions.append(
+            (key, probability)
+        )
+
+        # ----------------------------------------------------
+        # Temporal smoothing
+        # ----------------------------------------------------
+
+        if key not in history:
+
+            history[key] = deque(
+                maxlen=SMOOTH_FRAMES
+            )
+
+        history[key].append(
+            probability
+        )
+
+        avg_probability = float(
+            np.mean(history[key])
+        )
+
+        # ----------------------------------------------------
+        # Classification
+        # ----------------------------------------------------
+
+        label = int(
+            avg_probability >= THRESHOLD
+        )
+
+        if label == 1:
+
+            confidence = (
+                avg_probability
+            )
+
+        else:
+
+            confidence = (
+                1.0 - avg_probability
+            )
+
+        # ----------------------------------------------------
+        # Label
+        # ----------------------------------------------------
+
+        if confidence < CONFIDENCE_THR:
+
+            text = (
+                f"Uncertain "
+                f"{confidence * 100:.0f}%"
+            )
+
+            color = (
+                0,
+                165,
+                255
+            )
+
+        else:
+
+            text = (
+                f"{labels_dict[label]} "
+                f"{confidence * 100:.0f}%"
+            )
+
+            color = color_bgr[label]
+
+        # ----------------------------------------------------
+        # Convert coordinates back to original frame
+        # ----------------------------------------------------
+
+        if scale != 1.0:
+
+            inv_scale = 1.0 / scale
+
+            draw_x1 = int(
+                x1 * inv_scale
+            )
+
+            draw_y1 = int(
+                y1 * inv_scale
+            )
+
+            draw_x2 = int(
+                x2 * inv_scale
+            )
+
+            draw_y2 = int(
+                y2 * inv_scale
+            )
+
+        else:
+
+            draw_x1 = x1
+            draw_y1 = y1
+            draw_x2 = x2
+            draw_y2 = y2
+
+        # ----------------------------------------------------
+        # Draw face box
+        # ----------------------------------------------------
+
+        cv2.rectangle(
+            frame,
+            (draw_x1, draw_y1),
+            (draw_x2, draw_y2),
+            color,
+            2
+        )
+
+        # ----------------------------------------------------
+        # Draw label background
+        # ----------------------------------------------------
+
+        text_y = max(
+            draw_y1 - 10,
+            25
+        )
+
+        cv2.putText(
+            frame,
+            text,
+            (
+                draw_x1,
+                text_y
+            ),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.65,
+            color,
+            2,
+            cv2.LINE_AA
+        )
+
+    # --------------------------------------------------------
+    # Keep only current face predictions
+    # --------------------------------------------------------
+
+    valid_keys = {
+        item[0]
+        for item in current_predictions
+    }
+
+    cached_predictions = {
+        k: v
+        for k, v in cached_predictions.items()
+        if k in valid_keys
+    }
+
+    history_keys = list(
+        history.keys()
+    )
+
+    for key in history_keys:
+
+        if key not in valid_keys:
+
+            del history[key]
+
+    # --------------------------------------------------------
+    # Status text
+    # --------------------------------------------------------
+
+    cv2.putText(
+        frame,
+        "LIVE",
+        (20, 35),
+        cv2.FONT_HERSHEY_SIMPLEX,
+        0.75,
+        (0, 220, 100),
+        2,
+        cv2.LINE_AA
+    )
+
     return frame
 
-# ── Live video processor (streamlit-webrtc), loaded lazily ────────────────────
+
+# ============================================================
+# WEBRTC
+# ============================================================
+
 def get_ice_servers():
-    """Build the ICE server list for WebRTC.
 
-    Streamlit Community Cloud's network setup blocks the direct peer-to-peer
-    path a plain STUN server relies on, so a TURN server (which relays the
-    actual media instead of just helping two peers find each other) is
-    required there -- this is the officially documented fix from the
-    streamlit-webrtc maintainer for this exact platform.
+    # --------------------------------------------------------
+    # STUN + optional TURN
+    #
+    # For Streamlit Community Cloud, TURN may be necessary
+    # depending on the network.
+    #
+    # If you have Twilio credentials in secrets, use them.
+    # --------------------------------------------------------
 
-    Priority:
-      1. Twilio TURN via st.secrets, if configured (most reliable).
-      2. Open Relay Project's free TURN server, using their publicly
-         documented static-auth shared secret (same mechanism used by
-         Nextcloud Talk) -- no signup or account required, so this works
-         regardless of country restrictions on services like Twilio.
-      3. STUN-only as a last resort (works outside Community Cloud, e.g.
-         locally, but likely won't establish a connection on Cloud alone).
-    """
     try:
-        account_sid = st.secrets["TWILIO_ACCOUNT_SID"]
-        auth_token = st.secrets["TWILIO_AUTH_TOKEN"]
+
+        account_sid = st.secrets[
+            "TWILIO_ACCOUNT_SID"
+        ]
+
+        auth_token = st.secrets[
+            "TWILIO_AUTH_TOKEN"
+        ]
+
         from twilio.rest import Client
-        client = Client(account_sid, auth_token)
+
+        client = Client(
+            account_sid,
+            auth_token
+        )
+
         token = client.tokens.create()
+
         return token.ice_servers
+
     except Exception:
         pass
 
-    try:
-        import time, hmac, hashlib, base64
-        secret = "openrelayprojectsecret"  # Open Relay Project's public static-auth secret
-        username = str(int(time.time()) + 24 * 3600)  # valid for 24 hours
-        credential = base64.b64encode(
-            hmac.new(secret.encode(), username.encode(), hashlib.sha1).digest()
-        ).decode()
-        return [
-            {"urls": "stun:stun.l.google.com:19302"},
-            {
-                "urls": [
-                    "turn:staticauth.openrelay.metered.ca:80",
-                    "turn:staticauth.openrelay.metered.ca:443",
-                    "turns:staticauth.openrelay.metered.ca:443",
-                ],
-                "username": username,
-                "credential": credential,
-            },
-        ]
-    except Exception:
-        return [{"urls": ["stun:stun.l.google.com:19302"]}]
+    # --------------------------------------------------------
+    # STUN fallback
+    # --------------------------------------------------------
+
+    return [
+        {
+            "urls":
+            "stun:stun.l.google.com:19302"
+        }
+    ]
+
+
+# ============================================================
+# WEBRTC COMPONENTS
+# ============================================================
 
 @st.cache_resource(show_spinner=False)
 def get_webrtc_components():
-    """Import streamlit-webrtc/av and build the processor class + RTC config
-    only once, and only when actually needed -- see note at the top of this
-    file on why these imports are deferred rather than done at module level."""
+
     import av
-    from streamlit_webrtc import webrtc_streamer, VideoProcessorBase, RTCConfiguration
 
-    rtc_configuration = RTCConfiguration({"iceServers": get_ice_servers()})
+    from streamlit_webrtc import (
+        webrtc_streamer,
+        VideoProcessorBase,
+        RTCConfiguration
+    )
 
-    class MaskDetectionProcessor(VideoProcessorBase):
+    rtc_configuration = RTCConfiguration(
+        {
+            "iceServers": get_ice_servers()
+        }
+    )
+
+    class MaskDetectionProcessor(
+        VideoProcessorBase
+    ):
+
         def __init__(self):
-            # Cached loaders mean this is cheap even though __init__ can be
-            # called more than once per session (e.g. on reconnect).
-            self.model = load_mask_model()
-            self.face_cascade = load_face_cascade()
+
+            self.model = (
+                load_mask_model()
+            )
+
+            self.face_cascade = (
+                load_face_cascade()
+            )
+
             self.history = {}
 
+            self.cached_predictions = {}
+
+            self.frame_counter = 0
+
         def recv(self, frame):
-            img = frame.to_ndarray(format="bgr24")
-            img = detect_and_annotate(img, self.model, self.face_cascade, self.history)
-            return av.VideoFrame.from_ndarray(img, format="bgr24")
 
-    return webrtc_streamer, MaskDetectionProcessor, rtc_configuration
+            try:
 
-# ── Hero ──────────────────────────────────────────────────────────────────────
-st.markdown("""
-<div class="hero">
-    <div class="hero-badge">AI-Powered Detection</div>
-    <h1 class="hero-title">Mask<span>Guard</span> AI</h1>
-    <p class="hero-sub">Face mask detection — upload a photo or use your webcam live</p>
-</div>
-""", unsafe_allow_html=True)
+                # --------------------------------------------
+                # Convert WebRTC frame
+                # --------------------------------------------
 
-# ── Load resources ────────────────────────────────────────────────────────────
-model_loaded = False
-with st.spinner("Loading model…"):
-    try:
-        model        = load_mask_model()
-        face_cascade = load_face_cascade()
-        model_loaded = True
-    except Exception as e:
-        st.markdown(f"""
-        <div class="glass-card" style="border-color:rgba(255,75,90,0.3);">
-            <p style="color:#ff4b5a;font-family:'Syne',sans-serif;font-weight:700;margin:0;">⚠️ Model not found</p>
-            <p style="color:#6a8fa8;font-size:0.85rem;margin-top:0.5rem;">
-                Place <code style="color:#00cccc;">face_mask_detector.keras</code> in the same folder and restart.<br>
-                <small>{e}</small>
-            </p>
-        </div>""", unsafe_allow_html=True)
-
-if model_loaded:
-    tab_upload, tab_webcam = st.tabs(["📤  Upload Image", "📷  Live Webcam"])
-
-    # ════════════════════════════════════════════
-    # TAB 1 — UPLOAD
-    # ════════════════════════════════════════════
-    with tab_upload:
-        uploaded_file = st.file_uploader(
-            "Drop your image here or click to browse",
-            type=["jpg", "jpeg", "png", "webp"],
-            label_visibility="visible",
-        )
-        st.markdown("<br>", unsafe_allow_html=True)
-
-        if uploaded_file:
-            image_pil = Image.open(uploaded_file).convert("RGB")
-            image_np  = np.array(image_pil)
-
-            # Crop to the largest detected face before classifying — the model
-            # was trained ONLY on tight face crops (no background/body), so
-            # classifying a full uploaded photo directly is out-of-distribution
-            # and produces unreliable, biased-looking results.
-            face_box = detect_largest_face(image_np, face_cascade)
-            if face_box is not None:
-                x1, y1, x2, y2 = face_box
-                classify_np   = image_np[y1:y2, x1:x2]
-                display_np    = image_np.copy()
-                cv2.rectangle(display_np, (x1, y1), (x2, y2), (0, 210, 90), 3)
-                display_image = Image.fromarray(display_np)
-            else:
-                # No face found -- fall back to the whole image so the app
-                # still returns a result, but flag it as lower-confidence input.
-                classify_np   = image_np
-                display_image = image_pil
-
-            col_img, _, col_res = st.columns([5, 0.3, 5])
-
-            with col_img:
-                st.markdown('<div class="section-label">Input Image</div>', unsafe_allow_html=True)
-                st.image(display_image, use_container_width=True)
-                if face_box is None:
-                    st.markdown(
-                        '<p style="color:#ff9d3a;font-size:0.8rem;margin-top:0.5rem;">'
-                        '⚠️ No face detected — classifying the full image. For best '
-                        'accuracy, upload a clear, front-facing photo where the face '
-                        'is visible and reasonably close up.</p>',
-                        unsafe_allow_html=True,
-                    )
-                h, w = image_np.shape[:2]
-                # Stat boxes via native Streamlit columns (no raw HTML tables)
-                s1, s2, s3 = st.columns(3)
-                with s1:
-                    st.markdown(f'<div class="stat-box"><div class="stat-val">{w}px</div><div class="stat-key">Width</div></div>', unsafe_allow_html=True)
-                with s2:
-                    st.markdown(f'<div class="stat-box"><div class="stat-val">{h}px</div><div class="stat-key">Height</div></div>', unsafe_allow_html=True)
-                with s3:
-                    st.markdown('<div class="stat-box"><div class="stat-val">RGB</div><div class="stat-key">Mode</div></div>', unsafe_allow_html=True)
-
-            with col_res:
-                st.markdown('<div class="section-label">Detection Result</div>', unsafe_allow_html=True)
-                with st.spinner("Analysing…"):
-                    prob_without_mask = predict_image(model, classify_np)
-
-                label = int(prob_without_mask >= THRESHOLD)   # 0 = WithMask, 1 = WithoutMask
-                conf  = prob_without_mask if label == 1 else 1.0 - prob_without_mask
-                pct   = int(conf * 100)
-
-                # ── Result badge ──
-                if label == 0:
-                    st.markdown("""
-                    <div class="result-safe">
-                        <div style="font-size:2rem">😷</div>
-                        <div>
-                            <div class="rlabel safe-text">Mask Detected</div>
-                            <div class="rsub safe-sub">Face covering is present</div>
-                        </div>
-                    </div>""", unsafe_allow_html=True)
-                    bar_color = "linear-gradient(90deg,#00a876,#00d28c)"
-                else:
-                    st.markdown("""
-                    <div class="result-danger">
-                        <div style="font-size:2rem">🚫</div>
-                        <div>
-                            <div class="rlabel danger-text">No Mask Detected</div>
-                            <div class="rsub danger-sub">No face covering found</div>
-                        </div>
-                    </div>""", unsafe_allow_html=True)
-                    bar_color = "linear-gradient(90deg,#cc1a28,#ff4b5a)"
-
-                # ── Confidence score ──
-                st.markdown('<div class="glass-card">', unsafe_allow_html=True)
-                st.markdown('<div class="section-label">Confidence Score</div>', unsafe_allow_html=True)
-                st.markdown(f'<div style="font-family:Syne,sans-serif;font-size:1.9rem;font-weight:700;color:#e8f4f8;margin-bottom:0.4rem;">{pct}<span style="font-size:1rem;color:#6a8fa8;font-weight:400;">%</span></div>', unsafe_allow_html=True)
-                st.markdown(f'<div class="conf-track"><div style="height:100%;border-radius:99px;width:{pct}%;background:{bar_color};"></div></div>', unsafe_allow_html=True)
-                st.markdown('</div>', unsafe_allow_html=True)
-
-                # ── Class probabilities — use native progress bars ──
-                st.markdown("<br>", unsafe_allow_html=True)
-                st.markdown('<div class="section-label">Class Probabilities</div>', unsafe_allow_html=True)
-
-                mask_pct    = 1.0 - prob_without_mask
-                no_mask_pct = prob_without_mask
-
-                st.markdown(f'<div style="font-size:0.8rem;color:#6a8fa8;margin-bottom:0.2rem;">With Mask &nbsp; <span style="color:#00d28c;font-weight:600;">{mask_pct*100:.1f}%</span></div>', unsafe_allow_html=True)
-                st.progress(mask_pct)
-
-                st.markdown(f'<div style="font-size:0.8rem;color:#6a8fa8;margin:0.6rem 0 0.2rem;">Without Mask &nbsp; <span style="color:#ff4b5a;font-weight:600;">{no_mask_pct*100:.1f}%</span></div>', unsafe_allow_html=True)
-                st.progress(no_mask_pct)
-
-        else:
-            st.markdown("""
-            <div class="cam-placeholder">
-                <div style="font-size:3.2rem;margin-bottom:0.8rem;">🖼️</div>
-                <p style="font-family:'Syne',sans-serif;font-size:1.05rem;font-weight:600;color:#e8f4f8;margin:0 0 0.4rem;">
-                    No image uploaded yet
-                </p>
-                <p style="color:#4a6a7e;font-size:0.85rem;margin:0;">
-                    Upload a JPG, PNG, or WebP image above to begin
-                </p>
-            </div>""", unsafe_allow_html=True)
-
-    # ════════════════════════════════════════════
-    # TAB 2 — WEBCAM (live, via streamlit-webrtc)
-    # ════════════════════════════════════════════
-    with tab_webcam:
-        if "webcam_enabled" not in st.session_state:
-            st.session_state.webcam_enabled = False
-
-        col_ctrl, _, col_feed = st.columns([2, 0.3, 7])
-
-        with col_ctrl:
-            st.markdown('<div class="section-label">Controls</div>', unsafe_allow_html=True)
-
-            if not st.session_state.webcam_enabled:
-                st.markdown("""
-                <div style="font-size:0.78rem;color:#4a6a7e;line-height:1.8;margin-bottom:0.8rem;">
-                    Live detection loads a video engine on demand to keep the
-                    app lightweight for everyone who just uses image upload.
-                </div>""", unsafe_allow_html=True)
-                if st.button("🎥  Enable Live Webcam"):
-                    st.session_state.webcam_enabled = True
-                    st.rerun()
-            else:
-                st.markdown("""
-                <div style="font-size:0.78rem;color:#4a6a7e;line-height:1.8;margin-bottom:0.8rem;">
-                    Click <strong style="color:#00cccc;">START</strong> below and allow
-                    camera access in your browser when prompted.
-                </div>""", unsafe_allow_html=True)
-
-        with col_feed:
-            st.markdown('<div class="section-label">Camera Feed</div>', unsafe_allow_html=True)
-
-            if not st.session_state.webcam_enabled:
-                st.markdown("""
-                <div class="cam-placeholder">
-                    <div style="font-size:3rem;margin-bottom:0.8rem;">📷</div>
-                    <p style="font-family:'Syne',sans-serif;font-size:1rem;font-weight:600;color:#e8f4f8;margin:0 0 0.4rem;">
-                        Live webcam is not loaded yet
-                    </p>
-                    <p style="color:#4a6a7e;font-size:0.83rem;margin:0;">
-                        Click <strong style="color:#00cccc;">Enable Live Webcam</strong> to start
-                    </p>
-                </div>""", unsafe_allow_html=True)
-                webrtc_ctx = None
-            else:
-                webrtc_streamer, MaskDetectionProcessor, rtc_configuration = get_webrtc_components()
-                webrtc_ctx = webrtc_streamer(
-                    key="mask-detection",
-                    video_processor_factory=MaskDetectionProcessor,
-                    rtc_configuration=rtc_configuration,
-                    media_stream_constraints={"video": True, "audio": False},
-                    async_processing=True,
+                img = frame.to_ndarray(
+                    format="bgr24"
                 )
 
-        with col_ctrl:
-            st.markdown("<br>", unsafe_allow_html=True)
-            if webrtc_ctx is not None and webrtc_ctx.state.playing:
-                st.markdown('<div class="status-live"><span class="dot"></span> LIVE</div>', unsafe_allow_html=True)
+                self.frame_counter += 1
+
+                # --------------------------------------------
+                # Detection
+                # --------------------------------------------
+
+                img = detect_and_annotate(
+                    img,
+                    self.model,
+                    self.face_cascade,
+                    self.history,
+                    self.frame_counter,
+                    self.cached_predictions
+                )
+
+                # --------------------------------------------
+                # Return processed frame
+                # --------------------------------------------
+
+                return av.VideoFrame.from_ndarray(
+                    img,
+                    format="bgr24"
+                )
+
+            except Exception as e:
+
+                # Never crash the WebRTC thread
+                # because of one bad frame.
+
+                print(
+                    "WebRTC frame error:",
+                    repr(e)
+                )
+
+                return frame
+
+    return (
+        webrtc_streamer,
+        MaskDetectionProcessor,
+        rtc_configuration
+    )
+
+
+# ============================================================
+# HERO
+# ============================================================
+
+st.markdown(
+    """
+    <div class="hero">
+
+        <div class="hero-badge">
+            AI-Powered Detection
+        </div>
+
+        <h1 class="hero-title">
+            Mask<span>Guard</span> AI
+        </h1>
+
+        <p class="hero-sub">
+            Face mask detection using Deep Learning
+        </p>
+
+    </div>
+    """,
+    unsafe_allow_html=True
+)
+
+
+# ============================================================
+# LOAD MODEL
+# ============================================================
+
+model_loaded = False
+
+with st.spinner("Loading AI model..."):
+
+    try:
+
+        model = load_mask_model()
+
+        face_cascade = (
+            load_face_cascade()
+        )
+
+        model_loaded = True
+
+    except Exception as e:
+
+        st.error(
+            "Unable to load the face-mask model."
+        )
+
+        st.code(
+            str(e)
+        )
+
+
+# ============================================================
+# MAIN APPLICATION
+# ============================================================
+
+if model_loaded:
+
+    tab_upload, tab_webcam = st.tabs(
+        [
+            "📤 Upload Image",
+            "🎥 Live Webcam"
+        ]
+    )
+
+    # ========================================================
+    # UPLOAD TAB
+    # ========================================================
+
+    with tab_upload:
+
+        st.markdown(
+            '<div class="section-label">'
+            'Image Detection'
+            '</div>',
+            unsafe_allow_html=True
+        )
+
+        uploaded_file = st.file_uploader(
+            "Upload a face image",
+            type=[
+                "jpg",
+                "jpeg",
+                "png",
+                "webp"
+            ],
+            label_visibility="collapsed"
+        )
+
+        if uploaded_file:
+
+            image = Image.open(
+                uploaded_file
+            ).convert("RGB")
+
+            image_rgb = np.array(
+                image
+            )
+
+            result = detect_largest_face(
+                image_rgb,
+                face_cascade
+            )
+
+            display_image = image_rgb.copy()
+
+            if result is not None:
+
+                x1, y1, x2, y2 = result
+
+                face_rgb = image_rgb[
+                    y1:y2,
+                    x1:x2
+                ]
+
+                face_bgr = cv2.cvtColor(
+                    face_rgb,
+                    cv2.COLOR_RGB2BGR
+                )
+
+                probability = predict_face(
+                    model,
+                    face_bgr
+                )
+
+                label = int(
+                    probability >= THRESHOLD
+                )
+
+                if label == 1:
+
+                    confidence = probability
+
+                else:
+
+                    confidence = (
+                        1.0 - probability
+                    )
+
+                if confidence < CONFIDENCE_THR:
+
+                    text = (
+                        f"Uncertain "
+                        f"{confidence * 100:.1f}%"
+                    )
+
+                    color = (
+                        255,
+                        165,
+                        0
+                    )
+
+                else:
+
+                    text = (
+                        f"{labels_dict[label]} "
+                        f"{confidence * 100:.1f}%"
+                    )
+
+                    color = color_bgr[label]
+
+                cv2.rectangle(
+                    display_image,
+                    (x1, y1),
+                    (x2, y2),
+                    color,
+                    3
+                )
+
+                cv2.putText(
+                    display_image,
+                    text,
+                    (x1, max(y1 - 12, 30)),
+                    cv2.FONT_HERSHEY_SIMPLEX,
+                    0.8,
+                    color,
+                    2,
+                    cv2.LINE_AA
+                )
+
             else:
-                st.markdown('<div style="display:inline-flex;align-items:center;gap:0.4rem;background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.1);border-radius:50px;padding:0.25rem 0.8rem;font-size:0.72rem;font-weight:600;color:#5a7a8e;text-transform:uppercase;letter-spacing:0.1em;">⏸ STOPPED</div>', unsafe_allow_html=True)
 
-            st.markdown("""
-            <div style="margin-top:1.4rem;font-size:0.78rem;color:#4a6a7e;line-height:1.8;">
-                <div style="color:#6a8fa8;font-weight:500;margin-bottom:0.3rem;">How to use</div>
-                Click <strong style="color:#00cccc;">Enable Live Webcam</strong> first<br>
-                Then click <strong style="color:#00cccc;">START</strong> under the video<br>
-                Allow camera access when your browser asks<br>
-                Face the camera clearly, good lighting helps<br>
-                Click <strong style="color:#00cccc;">STOP</strong> when done
-            </div>""", unsafe_allow_html=True)
+                st.warning(
+                    "No face detected. "
+                    "Trying the complete image."
+                )
 
-# ── Footer ────────────────────────────────────────────────────────────────────
-st.markdown("""
-<div class="tips">
-    <strong>💡 Tips:</strong>&nbsp;
-    Use well-lit, front-facing photos &nbsp;·&nbsp;
-    Avoid heavy filters or blur &nbsp;·&nbsp;
-    Single face per image works best
-</div>
-""", unsafe_allow_html=True)
+                image_bgr = cv2.cvtColor(
+                    image_rgb,
+                    cv2.COLOR_RGB2BGR
+                )
+
+                probability = predict_face(
+                    model,
+                    image_bgr
+                )
+
+                label = int(
+                    probability >= THRESHOLD
+                )
+
+                confidence = (
+                    probability
+                    if label == 1
+                    else 1.0 - probability
+                )
+
+                text = (
+                    f"{labels_dict[label]} "
+                    f"{confidence * 100:.1f}%"
+                )
+
+                color = color_bgr[label]
+
+                cv2.putText(
+                    display_image,
+                    text,
+                    (20, 40),
+                    cv2.FONT_HERSHEY_SIMPLEX,
+                    0.8,
+                    color,
+                    2,
+                    cv2.LINE_AA
+                )
+
+            st.image(
+                display_image,
+                width="stretch"
+            )
+
+    # ========================================================
+    # WEBCAM TAB
+    # ========================================================
+
+    with tab_webcam:
+
+        st.markdown(
+            '<div class="section-label">'
+            'Live Detection'
+            '</div>',
+            unsafe_allow_html=True
+        )
+
+        st.info(
+            "Click START below and allow camera "
+            "permission when your browser asks."
+        )
+
+        try:
+
+            (
+                webrtc_streamer,
+                MaskDetectionProcessor,
+                rtc_configuration
+            ) = get_webrtc_components()
+
+            webrtc_ctx = webrtc_streamer(
+
+                key="mask-detection",
+
+                video_processor_factory=(
+                    MaskDetectionProcessor
+                ),
+
+                rtc_configuration=(
+                    rtc_configuration
+                ),
+
+                media_stream_constraints={
+                    "video": True,
+                    "audio": False
+                },
+
+                # ------------------------------------------------
+                # IMPORTANT:
+                # False is safer with TensorFlow/OpenCV processing
+                # on Streamlit Community Cloud.
+                # ------------------------------------------------
+
+                async_processing=False,
+            )
+
+            if webrtc_ctx.state.playing:
+
+                st.markdown(
+                    """
+                    <div class="status-card">
+                        🟢 <strong>Camera is running</strong>
+                        <br>
+                        <span style="color:#6a8fa8;">
+                        Face detection and mask classification
+                        are active.
+                        </span>
+                    </div>
+                    """,
+                    unsafe_allow_html=True
+                )
+
+            else:
+
+                st.markdown(
+                    """
+                    <div class="status-card">
+                        ⚪ <strong>Camera is stopped</strong>
+                        <br>
+                        <span style="color:#6a8fa8;">
+                        Press START to begin live detection.
+                        </span>
+                    </div>
+                    """,
+                    unsafe_allow_html=True
+                )
+
+        except Exception as e:
+
+            st.error(
+                "Webcam could not be initialized."
+            )
+
+            st.code(
+                str(e)
+            )
+
+            st.warning(
+                "If image upload works but the webcam "
+                "still fails, check the WebRTC/TURN "
+                "configuration and Streamlit Cloud logs."
+            )
+
+
+# ============================================================
+# FOOTER
+# ============================================================
+
+st.markdown(
+    """
+    <div style="
+        text-align:center;
+        padding:2rem 0 1rem 0;
+        color:#4a6a7e;
+        font-size:0.75rem;
+    ">
+        MaskGuard AI • Face Mask Detection System
+        <br>
+        TensorFlow • OpenCV • Streamlit • WebRTC
+    </div>
+    """,
+    unsafe_allow_html=True
+)
