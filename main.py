@@ -10,11 +10,10 @@ os.environ["TF_NUM_INTEROP_THREADS"] = "1"
 os.environ["OPENBLAS_NUM_THREADS"] = "1"
 
 import streamlit as st
+import numpy as np
 import cv2
 
 cv2.setNumThreads(1)
-
-import numpy as np
 
 from PIL import Image
 from collections import deque
