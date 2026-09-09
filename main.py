@@ -9,6 +9,8 @@ os.environ["TF_NUM_INTRAOP_THREADS"] = "1"
 os.environ["TF_NUM_INTEROP_THREADS"] = "1"
 os.environ["OPENBLAS_NUM_THREADS"] = "1"
 
+import textwrap
+
 import streamlit as st
 import cv2
 
@@ -39,6 +41,7 @@ st.set_page_config(
 # ============================================================
 
 st.markdown(
+    textwrap.dedent(
     """
     <style>
 
@@ -117,7 +120,8 @@ st.markdown(
     }
 
     </style>
-    """,
+    """
+    ),
     unsafe_allow_html=True,
 )
 
@@ -868,6 +872,7 @@ def get_webrtc_components():
 # ============================================================
 
 st.markdown(
+    textwrap.dedent(
     """
     <div class="hero">
 
@@ -884,7 +889,8 @@ st.markdown(
         </p>
 
     </div>
-    """,
+    """
+    ),
     unsafe_allow_html=True
 )
 
@@ -1168,6 +1174,7 @@ if model_loaded:
                 if webrtc_ctx.state.playing:
 
                     st.markdown(
+                        textwrap.dedent(
                         """
                         <div class="status-card">
                             🟢 <strong>Camera is running</strong>
@@ -1177,13 +1184,15 @@ if model_loaded:
                             are active.
                             </span>
                         </div>
-                        """,
+                        """
+                        ),
                         unsafe_allow_html=True
                     )
 
                 else:
 
                     st.markdown(
+                        textwrap.dedent(
                         """
                         <div class="status-card">
                             ⚪ <strong>Camera is stopped</strong>
@@ -1192,7 +1201,8 @@ if model_loaded:
                             Press START to begin live detection.
                             </span>
                         </div>
-                        """,
+                        """
+                        ),
                         unsafe_allow_html=True
                     )
 
@@ -1218,6 +1228,7 @@ if model_loaded:
 # ============================================================
 
 st.markdown(
+    textwrap.dedent(
     """
     <div style="
         text-align:center;
@@ -1229,6 +1240,7 @@ st.markdown(
         <br>
         TensorFlow • OpenCV • Streamlit • WebRTC
     </div>
-    """,
+    """
+    ),
     unsafe_allow_html=True
 )
