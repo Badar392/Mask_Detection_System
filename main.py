@@ -724,153 +724,6 @@ def detect_and_annotate(
 
 
 # ============================================================
-# WEBRTC
-# ============================================================
-
-def get_ice_servers():
-
-    # --------------------------------------------------------
-    # STUN + optional TURN
-    #
-    # For Streamlit Community Cloud, TURN may be necessary
-    # depending on the network.
-    #
-    # If you have Twilio credentials in secrets, use them.
-    # --------------------------------------------------------
-
-    try:
-
-        account_sid = st.secrets[
-            "TWILIO_ACCOUNT_SID"
-        ]
-
-        auth_token = st.secrets[
-            "TWILIO_AUTH_TOKEN"
-        ]
-
-        from twilio.rest import Client
-
-        client = Client(
-            account_sid,
-            auth_token
-        )
-
-        token = client.tokens.create()
-
-        return token.ice_servers
-
-    except Exception:
-        pass
-
-    # --------------------------------------------------------
-    # STUN fallback
-    # --------------------------------------------------------
-
-    return [
-        {
-            "urls":
-            "stun:stun.l.google.com:19302"
-        }
-    ]
-
-
-# ============================================================
-# WEBRTC COMPONENTS
-# ============================================================
-
-@st.cache_resource(show_spinner=False)
-def get_webrtc_components():
-
-    import av
-
-    from streamlit_webrtc import (
-        webrtc_streamer,
-        VideoProcessorBase,
-        RTCConfiguration
-    )
-
-    rtc_configuration = RTCConfiguration(
-        {
-            "iceServers": get_ice_servers()
-        }
-    )
-
-    class MaskDetectionProcessor(
-        VideoProcessorBase
-    ):
-
-        def __init__(self):
-
-            self.model = (
-                load_mask_model()
-            )
-
-            self.face_cascade = (
-                load_face_cascade()
-            )
-
-            self.history = {}
-
-            self.cached_predictions = {}
-
-            self.frame_counter = 0
-
-        def recv(self, frame):
-
-            try:
-
-                # --------------------------------------------
-                # Convert WebRTC frame
-                # --------------------------------------------
-
-                img = frame.to_ndarray(
-                    format="bgr24"
-                )
-
-                self.frame_counter += 1
-
-                # --------------------------------------------
-                # Detection
-                # --------------------------------------------
-
-                img = detect_and_annotate(
-                    img,
-                    self.model,
-                    self.face_cascade,
-                    self.history,
-                    self.frame_counter,
-                    self.cached_predictions
-                )
-
-                # --------------------------------------------
-                # Return processed frame
-                # --------------------------------------------
-
-                return av.VideoFrame.from_ndarray(
-                    img,
-                    format="bgr24"
-                )
-
-            except Exception as e:
-
-                # Never crash the WebRTC thread
-                # because of one bad frame.
-
-                print(
-                    "WebRTC frame error:",
-                    repr(e)
-                )
-
-                return frame
-
-    return (
-        webrtc_streamer,
-        MaskDetectionProcessor,
-        rtc_configuration
-    )
-
-
-# ============================================================
 # HERO
 # ============================================================
 
@@ -1118,112 +971,111 @@ if model_loaded:
             unsafe_allow_html=True
         )
 
-        if "webcam_enabled" not in st.session_state:
-            st.session_state.webcam_enabled = False
+        st.info(
+            "Take a photo with your browser camera. The image is "
+            "processed after capture and is not stored by the app."
+        )
 
-        if not st.session_state.webcam_enabled:
+        camera_image = st.camera_input(
+            "Open webcam",
+            key="webcam_capture"
+        )
 
-            st.info(
-                "Live detection loads a separate video engine "
-                "on demand, so it stays out of the way until "
-                "you actually want to use it."
+        if camera_image is not None:
+
+            image = Image.open(
+                camera_image
+            ).convert("RGB")
+
+            image_rgb = np.array(
+                image
             )
 
-            if st.button("🎥 Enable Live Webcam"):
-                st.session_state.webcam_enabled = True
-                st.rerun()
-
-        else:
-
-            st.info(
-                "Click START below and allow camera "
-                "permission when your browser asks."
+            result = detect_largest_face(
+                image_rgb,
+                face_cascade
             )
 
-            try:
+            display_image = image_rgb.copy()
 
-                (
-                    webrtc_streamer,
-                    MaskDetectionProcessor,
-                    rtc_configuration
-                ) = get_webrtc_components()
+            if result is not None:
 
-                webrtc_ctx = webrtc_streamer(
+                x1, y1, x2, y2 = result
 
-                    key="mask-detection",
+                face_rgb = image_rgb[
+                    y1:y2,
+                    x1:x2
+                ]
 
-                    video_processor_factory=(
-                        MaskDetectionProcessor
-                    ),
-
-                    rtc_configuration=(
-                        rtc_configuration
-                    ),
-
-                    media_stream_constraints={
-                        "video": True,
-                        "audio": False
-                    },
-
-                    # ------------------------------------------------
-                    # IMPORTANT:
-                    # False is safer with TensorFlow/OpenCV processing
-                    # on Streamlit Community Cloud.
-                    # ------------------------------------------------
-
-                    async_processing=False,
+                probability = predict_face(
+                    model,
+                    cv2.cvtColor(
+                        face_rgb,
+                        cv2.COLOR_RGB2BGR
+                    )
                 )
 
-                if webrtc_ctx.state.playing:
+                label = int(
+                    probability >= THRESHOLD
+                )
 
-                    st.markdown(
-                        textwrap.dedent(
-                        """
-                        <div class="status-card">
-                            🟢 <strong>Camera is running</strong>
-                            <br>
-                            <span style="color:#6a8fa8;">
-                            Face detection and mask classification
-                            are active.
-                            </span>
-                        </div>
-                        """
-                        ),
-                        unsafe_allow_html=True
+                confidence = (
+                    probability
+                    if label == 1
+                    else 1.0 - probability
+                )
+
+                if confidence < CONFIDENCE_THR:
+
+                    text = (
+                        f"Uncertain "
+                        f"{confidence * 100:.1f}%"
+                    )
+
+                    color = (
+                        255,
+                        165,
+                        0
                     )
 
                 else:
 
-                    st.markdown(
-                        textwrap.dedent(
-                        """
-                        <div class="status-card">
-                            ⚪ <strong>Camera is stopped</strong>
-                            <br>
-                            <span style="color:#6a8fa8;">
-                            Press START to begin live detection.
-                            </span>
-                        </div>
-                        """
-                        ),
-                        unsafe_allow_html=True
+                    text = (
+                        f"{labels_dict[label]} "
+                        f"{confidence * 100:.1f}%"
                     )
 
-            except Exception as e:
+                    color = color_bgr[label]
 
-                st.error(
-                    "Webcam could not be initialized."
+                cv2.rectangle(
+                    display_image,
+                    (x1, y1),
+                    (x2, y2),
+                    color,
+                    3
                 )
 
-                st.code(
-                    str(e)
+                cv2.putText(
+                    display_image,
+                    text,
+                    (x1, max(y1 - 12, 30)),
+                    cv2.FONT_HERSHEY_SIMPLEX,
+                    0.8,
+                    color,
+                    2,
+                    cv2.LINE_AA
                 )
+
+            else:
 
                 st.warning(
-                    "If image upload works but the webcam "
-                    "still fails, check the WebRTC/TURN "
-                    "configuration and Streamlit Cloud logs."
+                    "No face detected in the camera image."
                 )
+
+            st.image(
+                display_image,
+                width="stretch"
+            )
 
 
 # ============================================================
@@ -1241,7 +1093,7 @@ st.markdown(
     ">
         MaskGuard AI • Face Mask Detection System
         <br>
-        TensorFlow • OpenCV • Streamlit • WebRTC
+        TensorFlow • OpenCV • Streamlit
     </div>
     """
     ),
