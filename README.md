@@ -8,7 +8,7 @@ A real-time computer vision application that detects whether a person is wearing
 
 ## 🚀 Features
 
-- Real-time face mask detection via webcam
+- Face mask detection from browser webcam photos
 - Image upload option for mask detection
 - CNN-based deep learning model for accurate classification
 - Interactive and easy-to-use web interface
@@ -86,21 +86,20 @@ streamlit run main.py
 This will launch the web interface in your browser, where you can:
 
 - Upload an image for prediction
-- Start the live webcam feed for real-time face mask detection
+- Capture a webcam photo for face mask detection
 - View prediction results instantly
 
 ### Live webcam notes
 
-The webcam tab uses [`streamlit-webrtc`](https://github.com/whitphx/streamlit-webrtc)
-rather than `cv2.VideoCapture(0)`. This matters once deployed: `cv2.VideoCapture(0)`
-only ever reads a camera physically attached to the machine running the app —
-on a cloud host like Streamlit Community Cloud there is no such camera.
-`streamlit-webrtc` instead streams video from the *visitor's own browser
-camera* to the server over WebRTC, which is what makes live detection actually
-work for anyone visiting the deployed app, not just on your own laptop.
+The webcam tab uses Streamlit's [`st.camera_input`](https://docs.streamlit.io/develop/api-reference/widgets/st.camera_input)
+widget. The browser owns camera permission and captures a photo; the app
+processes that photo on the next Streamlit rerun. This is deployment-safe:
+`cv2.VideoCapture(0)` would look for a camera attached to the cloud server,
+while `st.camera_input` uses the visitor's browser camera.
 
-When you click **START** under the video panel, your browser will prompt for
-camera permission — this must be allowed for the stream to begin.
+Click **Open webcam**, allow camera permission, and capture a photo. Captured
+images are held only in the current Streamlit session and are not uploaded to
+any external service.
 
 ## 🧠 Model Training
 
@@ -114,15 +113,14 @@ the inference-side Streamlit app.
 
 ```text
 streamlit==1.56.0
-tensorflow==2.21.0
-numpy==2.4.4
+tensorflow-cpu==2.21.0
+numpy==2.2.6
 pandas==3.0.2
 scikit-learn==1.8.0
 matplotlib==3.10.9
 pillow==12.2.0
-opencv-python-headless==4.13.0.92
-streamlit-webrtc==0.47.1
-av==12.3.0
+opencv-python-headless==4.12.0.88
+pyarrow<25.0.0
 ```
 
 ## 📊 Results
@@ -133,4 +131,3 @@ The CNN model achieves high accuracy in distinguishing between masked and unmask
 - Educational demonstrations
 - Smart surveillance applications
 - Health and safety compliance systems
-
