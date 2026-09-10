@@ -13,6 +13,8 @@ A real-time computer vision application that detects whether a person is wearing
 - CNN-based deep learning model for accurate classification
 - Interactive and easy-to-use web interface
 - Visual feedback distinguishing **"Mask"** vs **"No Mask"**
+- Contrast enhancement, aspect-ratio-preserving model preprocessing, and
+  readable in-box labels for uploaded and camera images
 - Responsive web application deployed on Streamlit Cloud
 
 ## 🛠️ Tech Stack
@@ -95,14 +97,25 @@ The webcam tab keeps the camera disabled on initial load. Turn on **Enable
 webcam** before using Streamlit's
 [`st.camera_input`](https://docs.streamlit.io/develop/api-reference/widgets/st.camera_input)
 widget; turn it off again to remove the camera widget and close the active
-capture. The browser owns camera permission and captures a photo; the app
-processes that photo on the next Streamlit rerun. This is deployment-safe:
+capture. The browser owns camera permission and captures a photo; the app processes each
+captured frame on the next Streamlit rerun, retaining short-term predictions
+for stable live labels. This is deployment-safe:
 `cv2.VideoCapture(0)` would look for a camera attached to the cloud server,
 while `st.camera_input` uses the visitor's browser camera.
 
 Click **Open webcam**, allow camera permission, and capture a photo. Captured
 images are held only in the current Streamlit session and are not uploaded to
 any external service.
+
+### Image pipeline
+
+Both uploaded images and browser-camera frames use the same pipeline:
+
+1. Enhance local contrast with CLAHE and apply gentle unsharp sharpening.
+2. Detect faces on the enhanced image and add a small context margin.
+3. Letterbox each face to the model's exact 160x160 input without stretching.
+4. Map detections back to the original display image and draw the label inside
+   the top edge of each box.
 
 ## 🧠 Model Training
 
