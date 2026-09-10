@@ -1,31 +1,50 @@
+```python
 import os
-
 import faulthandler
+import textwrap
+from collections import deque
+
 faulthandler.enable()
+
+# ============================================================
+# ENVIRONMENT SETTINGS
+# ============================================================
 
 os.environ["TF_ENABLE_ONEDNN_OPTS"] = "0"
 os.environ["TF_CPP_MIN_LOG_LEVEL"] = "2"
 
-# Limit TensorFlow thread usage on Streamlit Cloud
+# Keep resource usage low on Streamlit Cloud
 os.environ["OMP_NUM_THREADS"] = "1"
 os.environ["TF_NUM_INTRAOP_THREADS"] = "1"
 os.environ["TF_NUM_INTEROP_THREADS"] = "1"
 os.environ["OPENBLAS_NUM_THREADS"] = "1"
 
-import textwrap
+
+# ============================================================
+# IMPORTS
+# ============================================================
 
 import streamlit as st
 import cv2
-
-cv2.setNumThreads(1)
-
 import numpy as np
 
-from PIL import Image
-from PIL import ImageOps
-from collections import deque
-
+from PIL import Image, ImageOps
 from tensorflow.keras.models import load_model
+
+# Required for REAL-TIME browser webcam
+from streamlit_webrtc import (
+    webrtc_streamer,
+    WebRtcMode,
+    RTCConfiguration,
+    VideoProcessorBase,
+)
+
+
+# ============================================================
+# OPENCV SETTINGS
+# ============================================================
+
+cv2.setNumThreads(1)
 
 
 # ============================================================
@@ -46,92 +65,71 @@ st.set_page_config(
 
 st.html(
     textwrap.dedent(
-    """
-    <style>
+        """
+        <style>
 
-    .stApp {
-        background:
-            radial-gradient(
-                circle at 20% 10%,
-                rgba(0, 200, 200, 0.08),
-                transparent 30%
-            ),
-            radial-gradient(
-                circle at 80% 20%,
-                rgba(0, 120, 255, 0.07),
-                transparent 30%
-            ),
-            #071116;
-        color: #e8f4f8;
-    }
+        .stApp {
+            background:
+                radial-gradient(
+                    circle at 20% 10%,
+                    rgba(0, 200, 200, 0.08),
+                    transparent 30%
+                ),
+                radial-gradient(
+                    circle at 80% 20%,
+                    rgba(0, 120, 255, 0.07),
+                    transparent 30%
+                ),
+                #071116;
+            color: #e8f4f8;
+        }
 
-    .hero {
-        padding: 2rem 0 1rem 0;
-        text-align: center;
-    }
+        .hero {
+            padding: 2rem 0 1rem 0;
+            text-align: center;
+        }
 
-    .hero-badge {
-        display: inline-block;
-        padding: 0.35rem 0.8rem;
-        border-radius: 20px;
-        background: rgba(0, 200, 200, 0.10);
-        border: 1px solid rgba(0, 200, 200, 0.25);
-        color: #00cccc;
-        font-size: 0.75rem;
-        font-weight: 700;
-        letter-spacing: 1px;
-        text-transform: uppercase;
-    }
+        .hero-badge {
+            display: inline-block;
+            padding: 0.35rem 0.8rem;
+            border-radius: 20px;
+            background: rgba(0, 200, 200, 0.10);
+            border: 1px solid rgba(0, 200, 200, 0.25);
+            color: #00cccc;
+            font-size: 0.75rem;
+            font-weight: 700;
+            letter-spacing: 1px;
+            text-transform: uppercase;
+        }
 
-    .hero-title {
-        font-size: 3.5rem;
-        font-weight: 800;
-        margin: 0.6rem 0;
-        color: #e8f4f8;
-    }
+        .hero-title {
+            font-size: 3.5rem;
+            font-weight: 800;
+            margin: 0.6rem 0;
+            color: #e8f4f8;
+        }
 
-    .hero-title span {
-        color: #00cccc;
-    }
+        .hero-title span {
+            color: #00cccc;
+        }
 
-    .hero-sub {
-        color: #6a8fa8;
-        font-size: 1rem;
-    }
+        .hero-sub {
+            color: #6a8fa8;
+            font-size: 1rem;
+        }
 
-    .section-label {
-        color: #00cccc;
-        font-size: 0.75rem;
-        font-weight: 700;
-        letter-spacing: 1.5px;
-        text-transform: uppercase;
-        margin-bottom: 0.8rem;
-    }
+        .section-label {
+            color: #00cccc;
+            font-size: 0.75rem;
+            font-weight: 700;
+            letter-spacing: 1.5px;
+            text-transform: uppercase;
+            margin-bottom: 0.8rem;
+        }
 
-    .glass-card {
-        padding: 1.5rem;
-        border-radius: 18px;
-        background: rgba(255,255,255,0.025);
-        border: 1px solid rgba(255,255,255,0.08);
-    }
-
-    .status-card {
-        padding: 1rem;
-        border-radius: 14px;
-        background: rgba(0, 200, 200, 0.05);
-        border: 1px solid rgba(0, 200, 200, 0.15);
-        margin-top: 1rem;
-    }
-
-    .stImage img {
-        width: 100%;
-        max-height: 75vh;
-        object-fit: contain;
-    }
-
-    </style>
-    """
-    ),
+        </style>
+        """
+    )
 )
 
 
@@ -139,6 +137,8 @@ st.html(
 # CONFIGURATION
 # ============================================================
 
+# IMPORTANT:
+# This must match the input size expected by your trained model.
 IMG_SIZE = (160, 160)
 
 MODEL_PATH = "face_mask_detector.keras"
@@ -148,25 +148,28 @@ CLASS_NAMES = [
     "WithoutMask",
 ]
 
+# Model probability threshold
 THRESHOLD = 0.50
+
+# Minimum confidence shown as a definite prediction
 CONFIDENCE_THR = 0.70
 
+# Temporal smoothing for webcam
 SMOOTH_FRAMES = 5
 
-# ------------------------------------------------------------
-# IMPORTANT:
-# Do NOT run neural-network inference on every camera frame.
-#
-# Example:
+# Run neural-network inference every N frames
 # 1 = every frame
 # 2 = every second frame
 # 3 = every third frame
-# ------------------------------------------------------------
+INFERENCE_EVERY_N_FRAMES = 3
 
-INFERENCE_EVERY_N_FRAMES = 4
-
-# Maximum width used for processing webcam frames
+# Maximum webcam processing width
 MAX_PROCESS_WIDTH = 640
+
+
+# ============================================================
+# LABELS / COLORS
+# ============================================================
 
 labels_dict = {
     0: "Mask",
@@ -174,9 +177,11 @@ labels_dict = {
 }
 
 color_bgr = {
-    0: (0, 210, 90),
-    1: (0, 60, 230),
+    0: (0, 210, 90),       # Green
+    1: (0, 60, 230),       # Red
 }
+
+UNCERTAIN_COLOR = (0, 165, 255)
 
 LABEL_FONT = cv2.FONT_HERSHEY_SIMPLEX
 
@@ -193,9 +198,14 @@ def load_mask_model():
         compile=False
     )
 
-    # Warm-up once
+    # Warm up model once
     dummy = np.zeros(
-        (1, IMG_SIZE[0], IMG_SIZE[1], 3),
+        (
+            1,
+            IMG_SIZE[0],
+            IMG_SIZE[1],
+            3
+        ),
         dtype=np.float32
     )
 
@@ -208,14 +218,15 @@ def load_mask_model():
 
 
 # ============================================================
-# FACE CASCADE
+# HAAR FACE DETECTOR
 # ============================================================
 
 @st.cache_resource(show_spinner=False)
 def load_face_cascade():
 
-    cascade_path = cv2.data.haarcascades + (
-        "haarcascade_frontalface_default.xml"
+    cascade_path = (
+        cv2.data.haarcascades
+        + "haarcascade_frontalface_default.xml"
     )
 
     cascade = cv2.CascadeClassifier(cascade_path)
@@ -229,241 +240,404 @@ def load_face_cascade():
 
 
 # ============================================================
-# SHARED IMAGE PREPROCESSING AND INFERENCE
+# IMAGE QUALITY ENHANCEMENT
 # ============================================================
 
 def enhance_image(image_bgr):
-    """Improve local contrast and detail without changing image geometry."""
-    lab = cv2.cvtColor(image_bgr, cv2.COLOR_BGR2LAB)
-    lightness, chroma_a, chroma_b = cv2.split(lab)
-    lightness = cv2.createCLAHE(
-        clipLimit=2.0,
-        tileGridSize=(8, 8),
-    ).apply(lightness)
-    enhanced = cv2.cvtColor(
-        cv2.merge((lightness, chroma_a, chroma_b)),
-        cv2.COLOR_LAB2BGR,
+    """
+    Improve image quality without changing geometry.
+
+    Pipeline:
+        1. Convert BGR -> LAB
+        2. CLAHE on luminance channel
+        3. Convert LAB -> BGR
+        4. Gentle unsharp masking
+
+    This helps with:
+        - dark images
+        - underexposed faces
+        - low contrast
+        - slightly blurry frames
+    """
+
+    if image_bgr is None or image_bgr.size == 0:
+        return image_bgr
+
+    # --------------------------------------------------------
+    # CLAHE
+    # --------------------------------------------------------
+
+    lab = cv2.cvtColor(
+        image_bgr,
+        cv2.COLOR_BGR2LAB
     )
 
-    blurred = cv2.GaussianBlur(enhanced, (0, 0), 1.0)
-    return cv2.addWeighted(enhanced, 1.12, blurred, -0.12, 0)
+    lightness, chroma_a, chroma_b = cv2.split(lab)
+
+    clahe = cv2.createCLAHE(
+        clipLimit=2.0,
+        tileGridSize=(8, 8)
+    )
+
+    lightness = clahe.apply(lightness)
+
+    enhanced = cv2.cvtColor(
+        cv2.merge(
+            (
+                lightness,
+                chroma_a,
+                chroma_b
+            )
+        ),
+        cv2.COLOR_LAB2BGR
+    )
+
+    # --------------------------------------------------------
+    # GENTLE SHARPENING
+    # --------------------------------------------------------
+
+    blurred = cv2.GaussianBlur(
+        enhanced,
+        (0, 0),
+        1.0
+    )
+
+    sharpened = cv2.addWeighted(
+        enhanced,
+        1.12,
+        blurred,
+        -0.12,
+        0
+    )
+
+    return sharpened
 
 
-def letterbox_image(image, target_size=IMG_SIZE, pad_value=114):
-    """Resize an image into target_size while preserving its aspect ratio."""
+# ============================================================
+# RESIZE + LETTERBOX
+# ============================================================
+
+def letterbox_image(
+    image,
+    target_size=IMG_SIZE,
+    pad_value=114
+):
+    """
+    Resize while preserving aspect ratio.
+
+    The image is NEVER stretched.
+
+    Returns:
+        letterboxed
+        scale
+        padding_x
+        padding_y
+    """
+
     target_width, target_height = target_size
+
     height, width = image.shape[:2]
-    scale = min(target_width / width, target_height / height)
-    resized_width = max(1, round(width * scale))
-    resized_height = max(1, round(height * scale))
+
+    if width <= 0 or height <= 0:
+        raise ValueError(
+            "Invalid image dimensions."
+        )
+
+    # --------------------------------------------------------
+    # Calculate scale
+    # --------------------------------------------------------
+
+    scale = min(
+        target_width / float(width),
+        target_height / float(height)
+    )
+
+    resized_width = max(
+        1,
+        int(round(width * scale))
+    )
+
+    resized_height = max(
+        1,
+        int(round(height * scale))
+    )
+
+    # --------------------------------------------------------
+    # Resize
+    # --------------------------------------------------------
+
+    interpolation = (
+        cv2.INTER_AREA
+        if scale < 1.0
+        else cv2.INTER_LINEAR
+    )
+
     resized = cv2.resize(
         image,
-        (resized_width, resized_height),
-        interpolation=cv2.INTER_AREA if scale < 1 else cv2.INTER_LINEAR,
+        (
+            resized_width,
+            resized_height
+        ),
+        interpolation=interpolation
     )
-    pad_x = (target_width - resized_width) // 2
-    pad_y = (target_height - resized_height) // 2
-    letterboxed = np.full(
-        (target_height, target_width, image.shape[2]),
-        pad_value,
-        dtype=image.dtype,
-    )
+
+    # --------------------------------------------------------
+    # Calculate padding
+    # --------------------------------------------------------
+
+    pad_x = (
+        target_width - resized_width
+    ) // 2
+
+    pad_y = (
+        target_height - resized_height
+    ) // 2
+
+    # --------------------------------------------------------
+    # Create padded image
+    # --------------------------------------------------------
+
+    if image.ndim == 3:
+
+        letterboxed = np.full(
+            (
+                target_height,
+                target_width,
+                image.shape[2]
+            ),
+            pad_value,
+            dtype=image.dtype
+        )
+
+    else:
+
+        letterboxed = np.full(
+            (
+                target_height,
+                target_width
+            ),
+            pad_value,
+            dtype=image.dtype
+        )
+
+    # --------------------------------------------------------
+    # Put resized image into padded canvas
+    # --------------------------------------------------------
+
     letterboxed[
-        pad_y:pad_y + resized_height,
-        pad_x:pad_x + resized_width,
+        pad_y:
+        pad_y + resized_height,
+        pad_x:
+        pad_x + resized_width
     ] = resized
-    return letterboxed, scale, (pad_x, pad_y)
 
-
-def map_box_from_letterbox(box, scale, padding, image_shape):
-    """Map a box from letterboxed coordinates back to the source image."""
-    pad_x, pad_y = padding
-    x1, y1, x2, y2 = box
-    height, width = image_shape[:2]
     return (
-        max(0, min(width, round((x1 - pad_x) / scale))),
-        max(0, min(height, round((y1 - pad_y) / scale))),
-        max(0, min(width, round((x2 - pad_x) / scale))),
-        max(0, min(height, round((y2 - pad_y) / scale))),
+        letterboxed,
+        scale,
+        (pad_x, pad_y)
     )
 
+
+# ============================================================
+# MAP LETTERBOX COORDINATES BACK
+# ============================================================
+
+def map_box_from_letterbox(
+    box,
+    scale,
+    padding,
+    image_shape
+):
+    """
+    Convert coordinates from letterboxed image
+    back to original image coordinates.
+    """
+
+    pad_x, pad_y = padding
+
+    x1, y1, x2, y2 = box
+
+    image_height, image_width = (
+        image_shape[:2]
+    )
+
+    x1 = (x1 - pad_x) / scale
+    y1 = (y1 - pad_y) / scale
+    x2 = (x2 - pad_x) / scale
+    y2 = (y2 - pad_y) / scale
+
+    x1 = max(
+        0,
+        min(
+            image_width - 1,
+            int(round(x1))
+        )
+    )
+
+    y1 = max(
+        0,
+        min(
+            image_height - 1,
+            int(round(y1))
+        )
+    )
+
+    x2 = max(
+        0,
+        min(
+            image_width - 1,
+            int(round(x2))
+        )
+    )
+
+    y2 = max(
+        0,
+        min(
+            image_height - 1,
+            int(round(y2))
+        )
+    )
+
+    return (
+        x1,
+        y1,
+        x2,
+        y2
+    )
+
+
+# ============================================================
+# FACE PREPROCESSING
+# ============================================================
 
 def preprocess_face(face_bgr):
-    enhanced = enhance_image(face_bgr)
-    face_rgb = cv2.cvtColor(enhanced, cv2.COLOR_BGR2RGB)
-    letterboxed, _, _ = letterbox_image(face_rgb)
-    # The Keras model contains its own Rescaling(1 / 127.5, -1) layer.
-    return letterboxed.astype(np.float32)
+    """
+    EXACT preprocessing used before model inference.
 
+    Pipeline:
 
-def predict_face(model, face_bgr):
-    batch = np.expand_dims(preprocess_face(face_bgr), axis=0)
-    prediction = model.predict(batch, verbose=0)
-    return float(prediction[0][0])
+        Original face
+             ↓
+        CLAHE + sharpening
+             ↓
+        BGR -> RGB
+             ↓
+        Aspect-ratio-preserving resize
+             ↓
+        160 x 160
+             ↓
+        float32
 
+    NOTE:
+    Your current model contains its own
+    Rescaling(1 / 127.5, -1) layer, so we DO NOT
+    normalize pixels here.
+    """
 
-def detect_faces(image_bgr, face_cascade):
-    enhanced = enhance_image(image_bgr)
-    gray = cv2.cvtColor(enhanced, cv2.COLOR_BGR2GRAY)
-    faces = face_cascade.detectMultiScale(
-        gray,
-        scaleFactor=1.08,
-        minNeighbors=5,
-        minSize=(40, 40),
-    )
-    if len(faces) == 0:
-        faces = face_cascade.detectMultiScale(
-            gray,
-            scaleFactor=1.05,
-            minNeighbors=3,
-            minSize=(32, 32),
+    if face_bgr is None or face_bgr.size == 0:
+        raise ValueError(
+            "Empty face crop."
         )
-    if len(faces) == 0:
+
+    # Same enhancement used for uploaded
+    # images AND webcam frames.
+    enhanced = enhance_image(
+        face_bgr
+    )
+
+    # Convert to RGB because Keras image
+    # input is RGB.
+    face_rgb = cv2.cvtColor(
+        enhanced,
+        cv2.COLOR_BGR2RGB
+    )
+
+    # Preserve aspect ratio.
+    letterboxed, _, _ = letterbox_image(
+        face_rgb,
+        target_size=IMG_SIZE,
+        pad_value=114
+    )
+
+    return letterboxed.astype(
+        np.float32
+    )
+
+
+# ============================================================
+# MODEL PREDICTION
+# ============================================================
+
+def predict_face(
+    model,
+    face_bgr
+):
+    """
+    Run mask/no-mask classification
+    on one detected face.
+    """
+
+    processed = preprocess_face(
+        face_bgr
+    )
+
+    batch = np.expand_dims(
+        processed,
+        axis=0
+    )
+
+    prediction = model.predict(
+        batch,
+        verbose=0
+    )
+
+    # Model output:
+    # probability of class 1 = WithoutMask
+    probability = float(
+        prediction[0][0]
+    )
+
+    probability = np.clip(
+        probability,
+        0.0,
+        1.0
+    )
+
+    return probability
+
+
+# ============================================================
+# FACE DETECTION
+# ============================================================
+
+def detect_faces(
+    image_bgr,
+    face_cascade
+):
+    """
+    Detect faces using the enhanced image.
+
+    Returns boxes in ORIGINAL image coordinates.
+    """
+
+    if image_bgr is None or image_bgr.size == 0:
         return []
 
-    try:
-        grouped_faces, _ = cv2.groupRectangles(
-            faces.tolist() * 2,
-            1,
-            0.2,
-        )
-        faces = grouped_faces if len(grouped_faces) else faces
-    except cv2.error:
-        pass
-
-    boxes = []
-    image_height, image_width = image_bgr.shape[:2]
-    for x, y, width, height in faces:
-        pad = int(max(width, height) * 0.20)
-        boxes.append((
-            max(0, x - pad),
-            max(0, y - pad),
-            min(image_width, x + width + pad),
-            min(image_height, y + height + pad),
-        ))
-    return boxes
-
-
-def detect_largest_face(image_rgb, face_cascade):
-    boxes = detect_faces(cv2.cvtColor(image_rgb, cv2.COLOR_RGB2BGR), face_cascade)
-    return max(boxes, key=lambda box: (box[2] - box[0]) * (box[3] - box[1]), default=None)
-
-
-def predict_image(image_rgb, model, face_cascade):
-    image_bgr = cv2.cvtColor(image_rgb, cv2.COLOR_RGB2BGR)
-    detections = []
-    for x1, y1, x2, y2 in detect_faces(image_bgr, face_cascade):
-        face = image_bgr[y1:y2, x1:x2]
-        if face.size == 0:
-            continue
-        probability = predict_face(model, face)
-        label = int(probability >= THRESHOLD)
-        confidence = probability if label else 1.0 - probability
-        detections.append({
-            "box": (x1, y1, x2, y2),
-            "label": label,
-            "confidence": confidence,
-        })
-    return detections
-
-
-def draw_detections(image_rgb, detections):
-    image_bgr = cv2.cvtColor(image_rgb, cv2.COLOR_RGB2BGR)
-    for detection in detections:
-        x1, y1, x2, y2 = detection["box"]
-        label = detection["label"]
-        confidence = detection["confidence"]
-        color = color_bgr[label]
-        text = f"{labels_dict[label]} {confidence * 100:.0f}%"
-        cv2.rectangle(image_bgr, (x1, y1), (x2, y2), color, 3)
-        (text_width, text_height), baseline = cv2.getTextSize(
-            text, LABEL_FONT, 0.65, 2
-        )
-        label_x = max(x1, min(x2 - text_width, x1))
-        label_y = min(y2, y1 + text_height + baseline + 8)
-        cv2.rectangle(
-            image_bgr,
-            (label_x, y1),
-            (label_x + text_width + 8, label_y),
-            color,
-            -1,
-        )
-        cv2.putText(
-            image_bgr,
-            text,
-            (label_x + 4, label_y - baseline - 4),
-            LABEL_FONT,
-            0.65,
-            (255, 255, 255),
-            2,
-            cv2.LINE_AA,
-        )
-    return cv2.cvtColor(image_bgr, cv2.COLOR_BGR2RGB)
-
-
-# ============================================================
-# WEBCAM FRAME RESIZING
-# ============================================================
-
-def resize_for_processing(frame):
-
-    height, width = frame.shape[:2]
-
-    if width <= MAX_PROCESS_WIDTH:
-        return frame, 1.0
-
-    scale = (
-        MAX_PROCESS_WIDTH / float(width)
-    )
-
-    new_width = MAX_PROCESS_WIDTH
-
-    new_height = int(
-        height * scale
-    )
-
-    resized = cv2.resize(
-        frame,
-        (new_width, new_height),
-        interpolation=cv2.INTER_AREA
-    )
-
-    return resized, scale
-
-
-# ============================================================
-# LIVE FACE DETECTION + MASK PREDICTION
-# ============================================================
-
-def _legacy_detect_and_annotate(
-    frame,
-    model,
-    face_cascade,
-    history,
-    frame_counter,
-    cached_predictions
-):
-
     # --------------------------------------------------------
-    # Resize webcam frame
+    # Enhance image BEFORE face detection
     # --------------------------------------------------------
 
-    processed_frame, scale = (
-        resize_for_processing(frame)
+    enhanced = enhance_image(
+        image_bgr
     )
 
     gray = cv2.cvtColor(
-        processed_frame,
+        enhanced,
         cv2.COLOR_BGR2GRAY
     )
 
-    gray = cv2.createCLAHE(
-        clipLimit=2.0,
-        tileGridSize=(8, 8)
-    ).apply(gray)
-
     # --------------------------------------------------------
-    # Detect faces
+    # First detection pass
     # --------------------------------------------------------
 
     faces = face_cascade.detectMultiScale(
@@ -473,7 +647,12 @@ def _legacy_detect_and_annotate(
         minSize=(40, 40)
     )
 
+    # --------------------------------------------------------
+    # Second, more tolerant pass
+    # --------------------------------------------------------
+
     if len(faces) == 0:
+
         faces = face_cascade.detectMultiScale(
             gray,
             scaleFactor=1.05,
@@ -482,22 +661,7 @@ def _legacy_detect_and_annotate(
         )
 
     if len(faces) == 0:
-
-        history.clear()
-        cached_predictions.clear()
-
-        cv2.putText(
-            frame,
-            "No face detected",
-            (20, 40),
-            cv2.FONT_HERSHEY_SIMPLEX,
-            0.8,
-            (255, 255, 255),
-            2,
-            cv2.LINE_AA
-        )
-
-        return frame
+        return []
 
     # --------------------------------------------------------
     # Remove duplicate detections
@@ -511,33 +675,30 @@ def _legacy_detect_and_annotate(
             0.2
         )
 
-        if len(grouped_faces) == 0:
-            grouped_faces = faces
+        if len(grouped_faces) > 0:
+            faces = grouped_faces
 
-    except Exception:
-
-        grouped_faces = faces
+    except cv2.error:
+        pass
 
     # --------------------------------------------------------
-    # Determine whether this frame should run inference
+    # Convert face rectangles to boxes
     # --------------------------------------------------------
 
-    run_inference = (
-        frame_counter % INFERENCE_EVERY_N_FRAMES == 0
-        or not cached_predictions
+    boxes = []
+
+    image_height, image_width = (
+        image_bgr.shape[:2]
     )
 
-    current_predictions = []
+    for x, y, width, height in faces:
 
-    # --------------------------------------------------------
-    # Process each detected face
-    # --------------------------------------------------------
-
-    for face_index, (x, y, w, h) in enumerate(
-        grouped_faces
-    ):
-
-        pad = int(max(w, h) * 0.20)
+        # Add context around face.
+        # This is useful because mask classification
+        # needs to see the mouth/nose region.
+        pad = int(
+            max(width, height) * 0.20
+        )
 
         x1 = max(
             0,
@@ -550,113 +711,318 @@ def _legacy_detect_and_annotate(
         )
 
         x2 = min(
-            processed_frame.shape[1],
-            x + w + pad
+            image_width,
+            x + width + pad
         )
 
         y2 = min(
-            processed_frame.shape[0],
-            y + h + pad
+            image_height,
+            y + height + pad
         )
 
-        crop = processed_frame[
+        if x2 > x1 and y2 > y1:
+
+            boxes.append(
+                (
+                    x1,
+                    y1,
+                    x2,
+                    y2
+                )
+            )
+
+    return boxes
+
+
+# ============================================================
+# STATIC IMAGE PREDICTION
+# ============================================================
+
+def predict_image(
+    image_rgb,
+    model,
+    face_cascade
+):
+    """
+    Complete static-image pipeline.
+
+    Original image
+        ↓
+    Enhanced face detection
+        ↓
+    Face crop
+        ↓
+    Enhancement again
+        ↓
+    Letterbox
+        ↓
+    Model
+        ↓
+    Prediction
+    """
+
+    image_bgr = cv2.cvtColor(
+        image_rgb,
+        cv2.COLOR_RGB2BGR
+    )
+
+    boxes = detect_faces(
+        image_bgr,
+        face_cascade
+    )
+
+    detections = []
+
+    for (
+        x1,
+        y1,
+        x2,
+        y2
+    ) in boxes:
+
+        face = image_bgr[
             y1:y2,
             x1:x2
         ]
 
-        if crop.size == 0:
+        if face.size == 0:
             continue
 
-        # ----------------------------------------------------
-        # Create stable face key
-        # ----------------------------------------------------
+        try:
 
-        key = (
-            round(x1 / 40),
-            round(y1 / 40),
-            round(w / 40),
-            round(h / 40)
-        )
-
-        # ----------------------------------------------------
-        # Run model only when necessary
-        # ----------------------------------------------------
-
-        if run_inference:
-
-            try:
-
-                probability = predict_face(
-                    model,
-                    crop
-                )
-
-                cached_predictions[key] = (
-                    probability
-                )
-
-            except Exception:
-
-                probability = (
-                    cached_predictions.get(
-                        key,
-                        0.5
-                    )
-                )
-
-        else:
-
-            probability = (
-                cached_predictions.get(
-                    key,
-                    0.5
-                )
+            probability = predict_face(
+                model,
+                face
             )
 
-        current_predictions.append(
-            (key, probability)
-        )
-
-        # ----------------------------------------------------
-        # Temporal smoothing
-        # ----------------------------------------------------
-
-        if key not in history:
-
-            history[key] = deque(
-                maxlen=SMOOTH_FRAMES
-            )
-
-        history[key].append(
-            probability
-        )
-
-        avg_probability = float(
-            np.mean(history[key])
-        )
+        except Exception:
+            continue
 
         # ----------------------------------------------------
         # Classification
         # ----------------------------------------------------
 
         label = int(
-            avg_probability >= THRESHOLD
+            probability >= THRESHOLD
         )
 
         if label == 1:
 
-            confidence = (
-                avg_probability
-            )
+            confidence = probability
 
         else:
 
             confidence = (
-                1.0 - avg_probability
+                1.0 - probability
             )
 
+        detections.append(
+            {
+                "box": (
+                    x1,
+                    y1,
+                    x2,
+                    y2
+                ),
+                "label": label,
+                "confidence": confidence,
+            }
+        )
+
+    return detections
+
+
+# ============================================================
+# SAFE LABEL DRAWING
+# ============================================================
+
+def draw_label(
+    image_bgr,
+    text,
+    x1,
+    y1,
+    x2,
+    y2,
+    color
+):
+    """
+    Draw a readable label ABOVE the face box.
+
+    If there isn't enough room above the box,
+    automatically move the label INSIDE the box.
+
+    This prevents:
+        - text clipping
+        - text behind rectangle
+        - unreadable labels
+        - labels outside the image
+    """
+
+    font_scale = 0.60
+    thickness = 2
+
+    (
+        text_width,
+        text_height
+    ), baseline = cv2.getTextSize(
+        text,
+        LABEL_FONT,
+        font_scale,
+        thickness
+    )
+
+    padding_x = 7
+    padding_y = 5
+
+    label_width = (
+        text_width
+        + padding_x * 2
+    )
+
+    label_height = (
+        text_height
+        + baseline
+        + padding_y * 2
+    )
+
+    image_height, image_width = (
+        image_bgr.shape[:2]
+    )
+
+    # --------------------------------------------------------
+    # Preferred location:
+    # ABOVE the bounding box
+    # --------------------------------------------------------
+
+    label_x = x1
+
+    label_y = (
+        y1 - label_height
+    )
+
+    # --------------------------------------------------------
+    # Horizontal correction
+    # --------------------------------------------------------
+
+    label_x = max(
+        0,
+        min(
+            label_x,
+            image_width - label_width
+        )
+    )
+
+    # --------------------------------------------------------
+    # If label doesn't fit ABOVE the box,
+    # put it INSIDE the top of the box.
+    # --------------------------------------------------------
+
+    if label_y < 0:
+
+        label_y = y1
+
+        # If box is extremely small,
+        # make sure label still remains visible.
+        if (
+            label_y + label_height
+            > y2
+        ):
+
+            label_y = max(
+                0,
+                y2 - label_height
+            )
+
+    # --------------------------------------------------------
+    # Final vertical safety
+    # --------------------------------------------------------
+
+    label_y = max(
+        0,
+        min(
+            label_y,
+            image_height - label_height
+        )
+    )
+
+    # --------------------------------------------------------
+    # Draw filled background
+    # --------------------------------------------------------
+
+    cv2.rectangle(
+        image_bgr,
+        (
+            label_x,
+            label_y
+        ),
+        (
+            label_x + label_width,
+            label_y + label_height
+        ),
+        color,
+        -1
+    )
+
+    # --------------------------------------------------------
+    # Draw text
+    # --------------------------------------------------------
+
+    text_x = (
+        label_x + padding_x
+    )
+
+    text_y = (
+        label_y
+        + padding_y
+        + text_height
+    )
+
+    cv2.putText(
+        image_bgr,
+        text,
+        (
+            text_x,
+            text_y
+        ),
+        LABEL_FONT,
+        font_scale,
+        (255, 255, 255),
+        thickness,
+        cv2.LINE_AA
+    )
+
+
+# ============================================================
+# DRAW DETECTIONS
+# ============================================================
+
+def draw_detections(
+    image_rgb,
+    detections
+):
+    """
+    Draw bounding boxes and labels.
+    """
+
+    image_bgr = cv2.cvtColor(
+        image_rgb,
+        cv2.COLOR_RGB2BGR
+    )
+
+    for detection in detections:
+
+        x1, y1, x2, y2 = (
+            detection["box"]
+        )
+
+        label = detection["label"]
+
+        confidence = (
+            detection["confidence"]
+        )
+
         # ----------------------------------------------------
-        # Label
+        # Low-confidence prediction
         # ----------------------------------------------------
 
         if confidence < CONFIDENCE_THR:
@@ -666,11 +1032,7 @@ def _legacy_detect_and_annotate(
                 f"{confidence * 100:.0f}%"
             )
 
-            color = (
-                0,
-                165,
-                255
-            )
+            color = UNCERTAIN_COLOR
 
         else:
 
@@ -682,189 +1044,575 @@ def _legacy_detect_and_annotate(
             color = color_bgr[label]
 
         # ----------------------------------------------------
-        # Convert coordinates back to original frame
-        # ----------------------------------------------------
-
-        if scale != 1.0:
-
-            inv_scale = 1.0 / scale
-
-            draw_x1 = int(
-                x1 * inv_scale
-            )
-
-            draw_y1 = int(
-                y1 * inv_scale
-            )
-
-            draw_x2 = int(
-                x2 * inv_scale
-            )
-
-            draw_y2 = int(
-                y2 * inv_scale
-            )
-
-        else:
-
-            draw_x1 = x1
-            draw_y1 = y1
-            draw_x2 = x2
-            draw_y2 = y2
-
-        # ----------------------------------------------------
-        # Draw face box
+        # Bounding box
         # ----------------------------------------------------
 
         cv2.rectangle(
-            frame,
-            (draw_x1, draw_y1),
-            (draw_x2, draw_y2),
+            image_bgr,
+            (
+                x1,
+                y1
+            ),
+            (
+                x2,
+                y2
+            ),
             color,
-            2
+            3
         )
 
         # ----------------------------------------------------
-        # Draw label background
+        # SAFE LABEL
         # ----------------------------------------------------
 
-        text_y = max(
-            draw_y1 - 10,
-            25
+        draw_label(
+            image_bgr,
+            text,
+            x1,
+            y1,
+            x2,
+            y2,
+            color
         )
+
+    return cv2.cvtColor(
+        image_bgr,
+        cv2.COLOR_BGR2RGB
+    )
+
+
+# ============================================================
+# WEBCAM FRAME RESIZING
+# ============================================================
+
+def resize_for_processing(
+    frame
+):
+    """
+    Reduce very large webcam frames while
+    preserving aspect ratio.
+
+    IMPORTANT:
+    This is NOT model resizing.
+
+    It only reduces the webcam processing
+    resolution to improve performance.
+    """
+
+    height, width = frame.shape[:2]
+
+    if width <= MAX_PROCESS_WIDTH:
+
+        return frame, 1.0
+
+    scale = (
+        MAX_PROCESS_WIDTH
+        / float(width)
+    )
+
+    new_width = (
+        MAX_PROCESS_WIDTH
+    )
+
+    new_height = max(
+        1,
+        int(round(height * scale))
+    )
+
+    resized = cv2.resize(
+        frame,
+        (
+            new_width,
+            new_height
+        ),
+        interpolation=cv2.INTER_AREA
+    )
+
+    return (
+        resized,
+        scale
+    )
+
+
+# ============================================================
+# WEBCAM VIDEO PROCESSOR
+# ============================================================
+
+class MaskDetectionProcessor(
+    VideoProcessorBase
+):
+    """
+    Real-time webcam processor.
+
+    Every browser frame:
+
+        Camera frame
+             ↓
+        Resize
+             ↓
+        CLAHE
+             ↓
+        Face detection
+             ↓
+        Face crop
+             ↓
+        CLAHE + sharpening
+             ↓
+        Letterbox
+             ↓
+        Model
+             ↓
+        Temporal smoothing
+             ↓
+        Bounding box + label
+    """
+
+    def __init__(
+        self,
+        model,
+        face_cascade
+    ):
+
+        self.model = model
+        self.face_cascade = face_cascade
+
+        self.frame_counter = 0
+
+        self.history = {}
+
+        self.cached_predictions = {}
+
+    # --------------------------------------------------------
+    # Generate stable face key
+    # --------------------------------------------------------
+
+    @staticmethod
+    def make_face_key(
+        x1,
+        y1,
+        x2,
+        y2
+    ):
+
+        return (
+            round(x1 / 40),
+            round(y1 / 40),
+            round(x2 / 40),
+            round(y2 / 40),
+        )
+
+    # --------------------------------------------------------
+    # Process one webcam frame
+    # --------------------------------------------------------
+
+    def recv(
+        self,
+        frame
+    ):
+
+        self.frame_counter += 1
+
+        # ----------------------------------------------------
+        # Convert WebRTC frame -> BGR
+        # ----------------------------------------------------
+
+        original_bgr = frame.to_ndarray(
+            format="bgr24"
+        )
+
+        if (
+            original_bgr is None
+            or original_bgr.size == 0
+        ):
+
+            return frame
+
+        # ----------------------------------------------------
+        # Resize for performance
+        # ----------------------------------------------------
+
+        processed_frame, scale = (
+            resize_for_processing(
+                original_bgr
+            )
+        )
+
+        # ----------------------------------------------------
+        # Detect faces
+        #
+        # detect_faces() itself performs
+        # CLAHE + face detection.
+        # ----------------------------------------------------
+
+        boxes = detect_faces(
+            processed_frame,
+            self.face_cascade
+        )
+
+        # ----------------------------------------------------
+        # No faces
+        # ----------------------------------------------------
+
+        if not boxes:
+
+            self.history.clear()
+
+            self.cached_predictions.clear()
+
+            cv2.putText(
+                original_bgr,
+                "No face detected",
+                (
+                    20,
+                    40
+                ),
+                LABEL_FONT,
+                0.8,
+                (255, 255, 255),
+                2,
+                cv2.LINE_AA
+            )
+
+            return self._make_frame(
+                original_bgr
+            )
+
+        # ----------------------------------------------------
+        # Determine inference timing
+        # ----------------------------------------------------
+
+        run_inference = (
+            self.frame_counter
+            % INFERENCE_EVERY_N_FRAMES
+            == 0
+        )
+
+        detections = []
+
+        valid_keys = set()
+
+        # ----------------------------------------------------
+        # Process every detected face
+        # ----------------------------------------------------
+
+        for (
+            x1,
+            y1,
+            x2,
+            y2
+        ) in boxes:
+
+            key = self.make_face_key(
+                x1,
+                y1,
+                x2,
+                y2
+            )
+
+            valid_keys.add(key)
+
+            # ------------------------------------------------
+            # Crop face
+            # ------------------------------------------------
+
+            crop = processed_frame[
+                y1:y2,
+                x1:x2
+            ]
+
+            if crop.size == 0:
+                continue
+
+            # ------------------------------------------------
+            # Run model
+            #
+            # Always infer if we don't have
+            # a cached prediction.
+            # ------------------------------------------------
+
+            if (
+                run_inference
+                or key
+                not in self.cached_predictions
+            ):
+
+                try:
+
+                    probability = (
+                        predict_face(
+                            self.model,
+                            crop
+                        )
+                    )
+
+                    self.cached_predictions[
+                        key
+                    ] = probability
+
+                except Exception:
+
+                    probability = (
+                        self.cached_predictions.get(
+                            key,
+                            0.5
+                        )
+                    )
+
+            else:
+
+                probability = (
+                    self.cached_predictions.get(
+                        key,
+                        0.5
+                    )
+                )
+
+            # ------------------------------------------------
+            # Temporal smoothing
+            # ------------------------------------------------
+
+            if key not in self.history:
+
+                self.history[key] = deque(
+                    maxlen=SMOOTH_FRAMES
+                )
+
+            self.history[key].append(
+                probability
+            )
+
+            average_probability = (
+                float(
+                    np.mean(
+                        self.history[key]
+                    )
+                )
+            )
+
+            # ------------------------------------------------
+            # Classification
+            # ------------------------------------------------
+
+            label = int(
+                average_probability
+                >= THRESHOLD
+            )
+
+            if label == 1:
+
+                confidence = (
+                    average_probability
+                )
+
+            else:
+
+                confidence = (
+                    1.0
+                    - average_probability
+                )
+
+            # ------------------------------------------------
+            # Convert processed coordinates
+            # back to ORIGINAL webcam frame.
+            # ------------------------------------------------
+
+            if scale != 1.0:
+
+                draw_x1 = int(
+                    round(x1 / scale)
+                )
+
+                draw_y1 = int(
+                    round(y1 / scale)
+                )
+
+                draw_x2 = int(
+                    round(x2 / scale)
+                )
+
+                draw_y2 = int(
+                    round(y2 / scale)
+                )
+
+            else:
+
+                draw_x1 = x1
+                draw_y1 = y1
+                draw_x2 = x2
+                draw_y2 = y2
+
+            # ------------------------------------------------
+            # Clamp coordinates
+            # ------------------------------------------------
+
+            frame_height, frame_width = (
+                original_bgr.shape[:2]
+            )
+
+            draw_x1 = max(
+                0,
+                min(
+                    frame_width - 1,
+                    draw_x1
+                )
+            )
+
+            draw_y1 = max(
+                0,
+                min(
+                    frame_height - 1,
+                    draw_y1
+                )
+            )
+
+            draw_x2 = max(
+                0,
+                min(
+                    frame_width - 1,
+                    draw_x2
+                )
+            )
+
+            draw_y2 = max(
+                0,
+                min(
+                    frame_height - 1,
+                    draw_y2
+                )
+            )
+
+            detections.append(
+                {
+                    "box": (
+                        draw_x1,
+                        draw_y1,
+                        draw_x2,
+                        draw_y2,
+                    ),
+                    "label": label,
+                    "confidence": confidence,
+                }
+            )
+
+        # ----------------------------------------------------
+        # Remove stale predictions
+        # ----------------------------------------------------
+
+        for key in list(
+            self.cached_predictions.keys()
+        ):
+
+            if key not in valid_keys:
+
+                del self.cached_predictions[
+                    key
+                ]
+
+        for key in list(
+            self.history.keys()
+        ):
+
+            if key not in valid_keys:
+
+                del self.history[key]
+
+        # ----------------------------------------------------
+        # Draw detections directly on BGR frame
+        # ----------------------------------------------------
+
+        for detection in detections:
+
+            x1, y1, x2, y2 = (
+                detection["box"]
+            )
+
+            label = detection["label"]
+
+            confidence = (
+                detection["confidence"]
+            )
+
+            if confidence < CONFIDENCE_THR:
+
+                text = (
+                    f"Uncertain "
+                    f"{confidence * 100:.0f}%"
+                )
+
+                color = UNCERTAIN_COLOR
+
+            else:
+
+                text = (
+                    f"{labels_dict[label]} "
+                    f"{confidence * 100:.0f}%"
+                )
+
+                color = color_bgr[label]
+
+            # Bounding box
+            cv2.rectangle(
+                original_bgr,
+                (
+                    x1,
+                    y1
+                ),
+                (
+                    x2,
+                    y2
+                ),
+                color,
+                3
+            )
+
+            # Safe label
+            draw_label(
+                original_bgr,
+                text,
+                x1,
+                y1,
+                x2,
+                y2,
+                color
+            )
+
+        # ----------------------------------------------------
+        # LIVE indicator
+        # ----------------------------------------------------
 
         cv2.putText(
-            frame,
-            text,
+            original_bgr,
+            "LIVE",
             (
-                draw_x1,
-                text_y
+                20,
+                35
             ),
-            cv2.FONT_HERSHEY_SIMPLEX,
-            0.65,
-            color,
+            LABEL_FONT,
+            0.75,
+            (0, 220, 100),
             2,
             cv2.LINE_AA
         )
 
-    # --------------------------------------------------------
-    # Keep only current face predictions
-    # --------------------------------------------------------
-
-    valid_keys = {
-        item[0]
-        for item in current_predictions
-    }
-
-    cached_predictions = {
-        k: v
-        for k, v in cached_predictions.items()
-        if k in valid_keys
-    }
-
-    history_keys = list(
-        history.keys()
-    )
-
-    for key in history_keys:
-
-        if key not in valid_keys:
-
-            del history[key]
-
-    # --------------------------------------------------------
-    # Status text
-    # --------------------------------------------------------
-
-    cv2.putText(
-        frame,
-        "LIVE",
-        (20, 35),
-        cv2.FONT_HERSHEY_SIMPLEX,
-        0.75,
-        (0, 220, 100),
-        2,
-        cv2.LINE_AA
-    )
-
-    return frame
-
-
-# ============================================================
-# STREAMING FRAME PIPELINE
-# ============================================================
-
-def detect_and_annotate(
-    frame,
-    model,
-    face_cascade,
-    history,
-    frame_counter,
-    cached_predictions,
-):
-    """Process one browser-camera frame using the shared image pipeline."""
-    processed_frame, scale = resize_for_processing(frame)
-    boxes = detect_faces(processed_frame, face_cascade)
-    if not boxes:
-        history.clear()
-        cached_predictions.clear()
-        cv2.putText(
-            frame,
-            "No face detected",
-            (20, 40),
-            LABEL_FONT,
-            0.8,
-            (255, 255, 255),
-            2,
-            cv2.LINE_AA,
+        return self._make_frame(
+            original_bgr
         )
-        return frame
 
-    detections = []
-    run_inference = frame_counter % INFERENCE_EVERY_N_FRAMES == 0
-    valid_keys = set()
-    for x1, y1, x2, y2 in boxes:
-        key = (round(x1 / 40), round(y1 / 40), round(x2 / 40), round(y2 / 40))
-        valid_keys.add(key)
-        if run_inference or key not in cached_predictions:
-            crop = processed_frame[y1:y2, x1:x2]
-            if crop.size:
-                cached_predictions[key] = predict_face(model, crop)
-        probability = cached_predictions.get(key, 0.5)
-        history.setdefault(key, deque(maxlen=SMOOTH_FRAMES)).append(probability)
-        average = float(np.mean(history[key]))
-        label = int(average >= THRESHOLD)
-        detections.append({
-            "box": (
-                round(x1 / scale),
-                round(y1 / scale),
-                round(x2 / scale),
-                round(y2 / scale),
-            ),
-            "label": label,
-            "confidence": average if label else 1.0 - average,
-        })
+    # --------------------------------------------------------
+    # Convert processed BGR -> WebRTC frame
+    # --------------------------------------------------------
 
-    for key in list(cached_predictions):
-        if key not in valid_keys:
-            del cached_predictions[key]
-    for key in list(history):
-        if key not in valid_keys:
-            del history[key]
+    @staticmethod
+    def _make_frame(
+        image_bgr
+    ):
 
-    annotated_rgb = draw_detections(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB), detections)
-    annotated = cv2.cvtColor(annotated_rgb, cv2.COLOR_RGB2BGR)
-    cv2.putText(
-        annotated,
-        "LIVE",
-        (20, 35),
-        LABEL_FONT,
-        0.75,
-        (0, 220, 100),
-        2,
-        cv2.LINE_AA,
-    )
-    return annotated
+        from av import VideoFrame
+
+        return VideoFrame.from_ndarray(
+            image_bgr,
+            format="bgr24"
+        )
 
 
 # ============================================================
@@ -873,24 +1621,24 @@ def detect_and_annotate(
 
 st.html(
     textwrap.dedent(
-    """
-    <div class="hero">
+        """
+        <div class="hero">
 
-        <div class="hero-badge">
-            AI-Powered Detection
+            <div class="hero-badge">
+                AI-Powered Detection
+            </div>
+
+            <h1 class="hero-title">
+                Mask<span>Guard</span> AI
+            </h1>
+
+            <p class="hero-sub">
+                Face mask detection using Deep Learning
+            </p>
+
         </div>
-
-        <h1 class="hero-title">
-            Mask<span>Guard</span> AI
-        </h1>
-
-        <p class="hero-sub">
-            Face mask detection using Deep Learning
-        </p>
-
-    </div>
-    """
-    ),
+        """
+    )
 )
 
 
@@ -900,7 +1648,9 @@ st.html(
 
 model_loaded = False
 
-with st.spinner("Loading AI model..."):
+with st.spinner(
+    "Loading AI model..."
+):
 
     try:
 
@@ -929,15 +1679,17 @@ with st.spinner("Loading AI model..."):
 
 if model_loaded:
 
-    tab_upload, tab_webcam = st.tabs(
-        [
-            "📤 Upload Image",
-            "🎥 Live Webcam"
-        ]
+    tab_upload, tab_webcam = (
+        st.tabs(
+            [
+                "📤 Upload Image",
+                "🎥 Live Webcam"
+            ]
+        )
     )
 
     # ========================================================
-    # UPLOAD TAB
+    # UPLOAD IMAGE
     # ========================================================
 
     with tab_upload:
@@ -945,7 +1697,7 @@ if model_loaded:
         st.html(
             '<div class="section-label">'
             'Image Detection'
-            '</div>',
+            '</div>'
         )
 
         uploaded_file = st.file_uploader(
@@ -961,29 +1713,75 @@ if model_loaded:
 
         if uploaded_file:
 
-            image = ImageOps.exif_transpose(
-                Image.open(uploaded_file)
-            ).convert("RGB")
+            try:
 
-            image_rgb = np.array(
-                image
-            )
+                # ------------------------------------------------
+                # Correct EXIF orientation
+                # ------------------------------------------------
 
-            detections = predict_image(image_rgb, model, face_cascade)
-            display_image = draw_detections(image_rgb, detections)
-            if not detections:
-                st.warning(
-                    "No face detected. Move closer, face the camera, "
-                    "and try again."
+                image = ImageOps.exif_transpose(
+                    Image.open(
+                        uploaded_file
+                    )
+                ).convert("RGB")
+
+                image_rgb = np.array(
+                    image
                 )
 
-            st.image(
-                display_image,
-                width="stretch"
-            )
+                # ------------------------------------------------
+                # Run complete pipeline
+                # ------------------------------------------------
+
+                detections = (
+                    predict_image(
+                        image_rgb,
+                        model,
+                        face_cascade
+                    )
+                )
+
+                # ------------------------------------------------
+                # Draw results
+                # ------------------------------------------------
+
+                display_image = (
+                    draw_detections(
+                        image_rgb,
+                        detections
+                    )
+                )
+
+                if not detections:
+
+                    st.warning(
+                        "No face detected. "
+                        "Try a clearer image with "
+                        "the face looking toward the camera."
+                    )
+
+                else:
+
+                    st.success(
+                        f"{len(detections)} "
+                        f"face(s) detected."
+                    )
+
+                st.image(
+                    display_image,
+                    width="stretch"
+                )
+
+            except Exception as e:
+
+                st.error(
+                    "Could not process the image."
+                )
+
+                st.exception(e)
 
     # ========================================================
-    # WEBCAM TAB
+    # REAL-TIME WEBCAM
     # ========================================================
 
     with tab_webcam:
@@ -991,72 +1789,67 @@ if model_loaded:
         st.html(
             '<div class="section-label">'
             'Live Detection'
-            '</div>',
+            '</div>'
         )
 
-        camera_image = None
-        webcam_enabled = st.toggle(
-            "Enable webcam",
-            value=False,
-            key="webcam_enabled",
-            help="Allow the browser camera to be opened for a photo.",
+        st.info(
+            "Allow camera access in your browser. "
+            "Detection runs continuously on the live video."
         )
 
-        if not webcam_enabled:
-            st.session_state.pop("webcam_capture", None)
-            st.session_state.pop("webcam_history", None)
-            st.session_state.pop("webcam_predictions", None)
-            st.session_state.pop("webcam_frame_counter", None)
-            st.info(
-                "Webcam is off. Enable it above when you are ready "
-                "to take a photo."
+        # ----------------------------------------------------
+        # WebRTC configuration
+        # ----------------------------------------------------
+
+        RTC_CONFIGURATION = RTCConfiguration(
+            {
+                "iceServers": [
+                    {
+                        "urls": [
+                            "stun:stun.l.google.com:19302"
+                        ]
+                    }
+                ]
+            }
+        )
+
+        # ----------------------------------------------------
+        # REAL-TIME STREAM
+        # ----------------------------------------------------
+
+        webrtc_ctx = webrtc_streamer(
+            key="maskguard-live",
+
+            mode=WebRtcMode.SENDRECV,
+
+            rtc_configuration=RTC_CONFIGURATION,
+
+            media_stream_constraints={
+                "video": True,
+                "audio": False,
+            },
+
+            video_processor_factory=lambda:
+                MaskDetectionProcessor(
+                    model,
+                    face_cascade
+                ),
+
+            async_processing=True,
+        )
+
+        if webrtc_ctx.state.playing:
+
+            st.success(
+                "🟢 Camera is running — "
+                "live face detection is active."
             )
+
         else:
+
             st.info(
-                "Take a photo with your browser camera. The image is "
-                "processed after capture and is not stored by the app."
-            )
-
-            camera_image = st.camera_input(
-                "Open webcam",
-                key="webcam_capture"
-            )
-
-        if webcam_enabled and camera_image is not None:
-
-            image = ImageOps.exif_transpose(
-                Image.open(camera_image)
-            ).convert("RGB")
-
-            image_rgb = np.array(
-                image
-            )
-
-            webcam_history = st.session_state.setdefault(
-                "webcam_history", {}
-            )
-            webcam_predictions = st.session_state.setdefault(
-                "webcam_predictions", {}
-            )
-            webcam_frame_counter = st.session_state.get(
-                "webcam_frame_counter", 0
-            ) + 1
-            st.session_state["webcam_frame_counter"] = webcam_frame_counter
-            display_bgr = detect_and_annotate(
-                cv2.cvtColor(image_rgb, cv2.COLOR_RGB2BGR),
-                model,
-                face_cascade,
-                webcam_history,
-                webcam_frame_counter,
-                webcam_predictions,
-            )
-            display_image = cv2.cvtColor(
-                display_bgr, cv2.COLOR_BGR2RGB
-            )
-
-            st.image(
-                display_image,
-                width="stretch"
+                "Click START and allow your browser "
+                "to access the camera."
             )
 
 
@@ -1066,17 +1859,216 @@ if model_loaded:
 
 st.html(
     textwrap.dedent(
-    """
-    <div style="
-        text-align:center;
-        padding:2rem 0 1rem 0;
-        color:#4a6a7e;
-        font-size:0.75rem;
-    ">
-        MaskGuard AI • Face Mask Detection System
-        <br>
-        TensorFlow • OpenCV • Streamlit
-    </div>
-    """
-    ),
+        """
+        <div style="
+            text-align:center;
+            padding:2rem 0 1rem 0;
+            color:#4a6a7e;
+            font-size:0.75rem;
+        ">
+            MaskGuard AI • Face Mask Detection System
+            <br>
+            TensorFlow • OpenCV • Streamlit • WebRTC
+        </div>
+        """
+    )
 )
+```
+
+### Why this version should fix your four problems
+
+**1. Dark/low-quality images**
+
+Both face detection and mask classification now pass through `enhance_image()`.
+
+The enhancement is:
+
+```text
+Original
+   ↓
+LAB conversion
+   ↓
+CLAHE
+   ↓
+Gentle sharpening
+   ↓
+Face detection / classification
+```
+
+Your original code already had CLAHE and sharpening, but this version makes it a clearly shared pipeline for both upload and live processing.
+
+**2. Aspect-ratio problems**
+
+The classifier uses:
+
+```python
+letterbox_image(...)
+```
+
+instead of directly stretching a face crop.
+
+For example:
+
+```text
+Original face: 300 × 400
+
+        ┌───────────────┐
+        │      gray     │
+        │   ┌───────┐   │
+        │   │ face  │   │
+        │   │       │   │
+        │   └───────┘   │
+        │      gray      │
+        └───────────────┘
+
+             ↓
+
+          160 × 160
+```
+
+The important distinction is that **the face detector's coordinates remain in the source image**. Letterboxing is only applied to the cropped face going into the classification model. Therefore, you don't need to map the classifier's coordinates back to the original image—the bounding box comes from the face detector.
+
+Your existing code was already using a letterbox function, but this version makes that responsibility explicit.
+
+**3. Label is now safely positioned**
+
+The old code essentially did:
+
+```python
+text_y = max(draw_y1 - 10, 25)
+```
+
+which could cause the text/background relationship to become awkward near the top edge.
+
+The new `draw_label()` does:
+
+```text
+                Mask 96%
+        ┌───────────────────┐
+        │                   │
+        │       FACE        │
+        │                   │
+        └───────────────────┘
+```
+
+If there isn't enough room:
+
+```text
+┌───────────────────┐
+│ Mask 96%           │  ← label moves INSIDE
+│                   │
+│       FACE        │
+│                   │
+└───────────────────┘
+```
+
+So the label won't be cut off when the face touches the top of the image.
+
+**4. The webcam is actually continuous now**
+
+This is the biggest change.
+
+Your current application uses:
+
+```python
+st.camera_input(...)
+```
+
+which captures a photograph rather than processing a continuous video stream.
+
+The replacement uses:
+
+```python
+webrtc_streamer(
+    mode=WebRtcMode.SENDRECV,
+    ...
+)
+```
+
+and:
+
+```python
+class MaskDetectionProcessor(VideoProcessorBase):
+```
+
+Every incoming browser frame goes through:
+
+```text
+Browser Camera
+      ↓
+WebRTC frame
+      ↓
+resize_for_processing()
+      ↓
+enhance_image() / CLAHE
+      ↓
+Haar face detection
+      ↓
+face crop
+      ↓
+enhance_image()
+      ↓
+letterbox → 160×160
+      ↓
+TensorFlow model
+      ↓
+temporal smoothing
+      ↓
+Mask / No Mask
+      ↓
+bounding box + safe label
+      ↓
+browser
+```
+
+That is much more appropriate for your **MaskGuard AI** live webcam requirement.
+
+### Important: update `requirements.txt`
+
+Because your current project already uses `streamlit-webrtc`, make sure the deployment requirements contain the required packages. Your previous pipeline was already using `streamlit-webrtc`; the new code actually uses it for the webcam instead of leaving it unused.
+
+A suitable requirements file for this version is:
+
+```txt
+streamlit==1.56.0
+tensorflow-cpu==2.21.0
+numpy==2.4.4
+pandas==3.0.2
+scikit-learn==1.8.0
+matplotlib==3.10.9
+pillow==12.2.0
+opencv-python-headless==4.13.0.92
+streamlit-webrtc==0.77.0
+av==16.0.1
+aiortc==1.15.0
+pyarrow<25.0.0
+```
+
+### One important model-specific point
+
+I deliberately **did not add `/255.0` normalization**.
+
+Your current code states that the Keras model contains:
+
+```text
+Rescaling(1 / 127.5, -1)
+```
+
+and therefore the input should remain in the expected raw pixel range before being passed to the model.
+
+If that statement is correct for `face_mask_detector.keras`, adding `/255` would actually make your predictions worse.
+
+### Recommended testing order
+
+After replacing `main.py`:
+
+1. Test a **bright, clear face**.
+2. Test a **dark face**.
+3. Test a **slightly blurry face**.
+4. Test a portrait/landscape image with a different aspect ratio.
+5. Test a face touching the **top edge**—the label should move inside.
+6. Test the webcam locally.
+7. Deploy to Streamlit Cloud.
+8. On the deployed site, click **START** and allow camera permission.
+
+If **image upload works but WebRTC on Streamlit Cloud still doesn't start**, the issue is likely deployment/WebRTC connectivity rather than the TensorFlow model. In that case, the next thing to inspect is the WebRTC/browser console and Streamlit Cloud configuration rather than changing the CNN.
