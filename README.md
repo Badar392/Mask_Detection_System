@@ -91,8 +91,11 @@ This will launch the web interface in your browser, where you can:
 
 ### Live webcam notes
 
-The webcam tab uses Streamlit's [`st.camera_input`](https://docs.streamlit.io/develop/api-reference/widgets/st.camera_input)
-widget. The browser owns camera permission and captures a photo; the app
+The webcam tab keeps the camera disabled on initial load. Turn on **Enable
+webcam** before using Streamlit's
+[`st.camera_input`](https://docs.streamlit.io/develop/api-reference/widgets/st.camera_input)
+widget; turn it off again to remove the camera widget and close the active
+capture. The browser owns camera permission and captures a photo; the app
 processes that photo on the next Streamlit rerun. This is deployment-safe:
 `cv2.VideoCapture(0)` would look for a camera attached to the cloud server,
 while `st.camera_input` uses the visitor's browser camera.
