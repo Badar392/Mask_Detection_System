@@ -43,7 +43,7 @@ st.set_page_config(
 # CUSTOM CSS
 # ============================================================
 
-st.markdown(
+st.html(
     textwrap.dedent(
     """
     <style>
@@ -125,7 +125,6 @@ st.markdown(
     </style>
     """
     ),
-    unsafe_allow_html=True,
 )
 
 
@@ -727,7 +726,7 @@ def detect_and_annotate(
 # HERO
 # ============================================================
 
-st.markdown(
+st.html(
     textwrap.dedent(
     """
     <div class="hero">
@@ -747,7 +746,6 @@ st.markdown(
     </div>
     """
     ),
-    unsafe_allow_html=True
 )
 
 
@@ -799,11 +797,10 @@ if model_loaded:
 
     with tab_upload:
 
-        st.markdown(
+        st.html(
             '<div class="section-label">'
             'Image Detection'
             '</div>',
-            unsafe_allow_html=True
         )
 
         uploaded_file = st.file_uploader(
@@ -964,24 +961,38 @@ if model_loaded:
 
     with tab_webcam:
 
-        st.markdown(
+        st.html(
             '<div class="section-label">'
             'Live Detection'
             '</div>',
-            unsafe_allow_html=True
         )
 
-        st.info(
-            "Take a photo with your browser camera. The image is "
-            "processed after capture and is not stored by the app."
+        camera_image = None
+        webcam_enabled = st.toggle(
+            "Enable webcam",
+            value=False,
+            key="webcam_enabled",
+            help="Allow the browser camera to be opened for a photo.",
         )
 
-        camera_image = st.camera_input(
-            "Open webcam",
-            key="webcam_capture"
-        )
+        if not webcam_enabled:
+            st.session_state.pop("webcam_capture", None)
+            st.info(
+                "Webcam is off. Enable it above when you are ready "
+                "to take a photo."
+            )
+        else:
+            st.info(
+                "Take a photo with your browser camera. The image is "
+                "processed after capture and is not stored by the app."
+            )
 
-        if camera_image is not None:
+            camera_image = st.camera_input(
+                "Open webcam",
+                key="webcam_capture"
+            )
+
+        if webcam_enabled and camera_image is not None:
 
             image = Image.open(
                 camera_image
@@ -1082,7 +1093,7 @@ if model_loaded:
 # FOOTER
 # ============================================================
 
-st.markdown(
+st.html(
     textwrap.dedent(
     """
     <div style="
@@ -1097,5 +1108,4 @@ st.markdown(
     </div>
     """
     ),
-    unsafe_allow_html=True
 )
