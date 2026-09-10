@@ -22,6 +22,7 @@ cv2.setNumThreads(1)
 import numpy as np
 
 from PIL import Image
+from PIL import ImageOps
 from collections import deque
 
 from tensorflow.keras.models import load_model
@@ -120,6 +121,12 @@ st.html(
         background: rgba(0, 200, 200, 0.05);
         border: 1px solid rgba(0, 200, 200, 0.15);
         margin-top: 1rem;
+    }
+
+    .stImage img {
+        width: 100%;
+        max-height: 75vh;
+        object-fit: contain;
     }
 
     </style>
@@ -240,22 +247,9 @@ def preprocess_face(face_bgr):
         np.float32
     )
 
-    # --------------------------------------------------------
-    # IMPORTANT
-    #
-    # Your previous frontend used raw 0-255 values.
-    #
-    # Keep this exactly the same ONLY if the Colab model
-    # was trained using raw pixel values.
-    #
-    # If your new Colab model uses:
-    #     MobileNetV2 preprocess_input()
-    # or
-    #     image / 255.0
-    #
-    # then this section MUST be changed to match training.
-    # --------------------------------------------------------
-
+    # The Keras model contains its own Rescaling(1 / 127.5, -1)
+    # layer, so inference must receive RGB pixels in the original
+    # 0-255 range.
     return face_rgb
 
 
@@ -300,14 +294,28 @@ def detect_largest_face(
         cv2.COLOR_RGB2GRAY
     )
 
-    gray = cv2.equalizeHist(gray)
+    gray = cv2.createCLAHE(
+        clipLimit=2.0,
+        tileGridSize=(8, 8)
+    ).apply(gray)
 
+    # Browser camera photos vary considerably in size and lighting.
+    # Retry with a more permissive detector when the strict pass misses
+    # a face, while still selecting only the largest detected face.
     faces = face_cascade.detectMultiScale(
         gray,
-        scaleFactor=1.1,
-        minNeighbors=6,
-        minSize=(60, 60)
+        scaleFactor=1.08,
+        minNeighbors=5,
+        minSize=(40, 40)
     )
+
+    if len(faces) == 0:
+        faces = face_cascade.detectMultiScale(
+            gray,
+            scaleFactor=1.05,
+            minNeighbors=3,
+            minSize=(32, 32)
+        )
 
     if len(faces) == 0:
         return None
@@ -317,9 +325,7 @@ def detect_largest_face(
         key=lambda f: f[2] * f[3]
     )
 
-    pad = int(
-        max(w, h) * 0.10
-    )
+    pad = int(max(w, h) * 0.20)
 
     x1 = max(0, x - pad)
     y1 = max(0, y - pad)
@@ -398,7 +404,10 @@ def detect_and_annotate(
         cv2.COLOR_BGR2GRAY
     )
 
-    gray = cv2.equalizeHist(gray)
+    gray = cv2.createCLAHE(
+        clipLimit=2.0,
+        tileGridSize=(8, 8)
+    ).apply(gray)
 
     # --------------------------------------------------------
     # Detect faces
@@ -406,10 +415,18 @@ def detect_and_annotate(
 
     faces = face_cascade.detectMultiScale(
         gray,
-        scaleFactor=1.1,
-        minNeighbors=6,
-        minSize=(60, 60)
+        scaleFactor=1.08,
+        minNeighbors=5,
+        minSize=(40, 40)
     )
+
+    if len(faces) == 0:
+        faces = face_cascade.detectMultiScale(
+            gray,
+            scaleFactor=1.05,
+            minNeighbors=3,
+            minSize=(32, 32)
+        )
 
     if len(faces) == 0:
 
@@ -467,9 +484,7 @@ def detect_and_annotate(
         grouped_faces
     ):
 
-        pad = int(
-            max(w, h) * 0.10
-        )
+        pad = int(max(w, h) * 0.20)
 
         x1 = max(
             0,
@@ -816,8 +831,8 @@ if model_loaded:
 
         if uploaded_file:
 
-            image = Image.open(
-                uploaded_file
+            image = ImageOps.exif_transpose(
+                Image.open(uploaded_file)
             ).convert("RGB")
 
             image_rgb = np.array(
@@ -906,48 +921,9 @@ if model_loaded:
                 )
 
             else:
-
                 st.warning(
-                    "No face detected. "
-                    "Trying the complete image."
-                )
-
-                image_bgr = cv2.cvtColor(
-                    image_rgb,
-                    cv2.COLOR_RGB2BGR
-                )
-
-                probability = predict_face(
-                    model,
-                    image_bgr
-                )
-
-                label = int(
-                    probability >= THRESHOLD
-                )
-
-                confidence = (
-                    probability
-                    if label == 1
-                    else 1.0 - probability
-                )
-
-                text = (
-                    f"{labels_dict[label]} "
-                    f"{confidence * 100:.1f}%"
-                )
-
-                color = color_bgr[label]
-
-                cv2.putText(
-                    display_image,
-                    text,
-                    (20, 40),
-                    cv2.FONT_HERSHEY_SIMPLEX,
-                    0.8,
-                    color,
-                    2,
-                    cv2.LINE_AA
+                    "No face detected. Move closer, face the camera, "
+                    "and try again."
                 )
 
             st.image(
@@ -994,8 +970,8 @@ if model_loaded:
 
         if webcam_enabled and camera_image is not None:
 
-            image = Image.open(
-                camera_image
+            image = ImageOps.exif_transpose(
+                Image.open(camera_image)
             ).convert("RGB")
 
             image_rgb = np.array(
