@@ -178,6 +178,8 @@ color_bgr = {
     1: (0, 60, 230),
 }
 
+LABEL_FONT = cv2.FONT_HERSHEY_SIMPLEX
+
 
 # ============================================================
 # MODEL LOADER
@@ -227,125 +229,176 @@ def load_face_cascade():
 
 
 # ============================================================
-# MODEL PREPROCESSING
+# SHARED IMAGE PREPROCESSING AND INFERENCE
 # ============================================================
+
+def enhance_image(image_bgr):
+    """Improve local contrast and detail without changing image geometry."""
+    lab = cv2.cvtColor(image_bgr, cv2.COLOR_BGR2LAB)
+    lightness, chroma_a, chroma_b = cv2.split(lab)
+    lightness = cv2.createCLAHE(
+        clipLimit=2.0,
+        tileGridSize=(8, 8),
+    ).apply(lightness)
+    enhanced = cv2.cvtColor(
+        cv2.merge((lightness, chroma_a, chroma_b)),
+        cv2.COLOR_LAB2BGR,
+    )
+
+    blurred = cv2.GaussianBlur(enhanced, (0, 0), 1.0)
+    return cv2.addWeighted(enhanced, 1.12, blurred, -0.12, 0)
+
+
+def letterbox_image(image, target_size=IMG_SIZE, pad_value=114):
+    """Resize an image into target_size while preserving its aspect ratio."""
+    target_width, target_height = target_size
+    height, width = image.shape[:2]
+    scale = min(target_width / width, target_height / height)
+    resized_width = max(1, round(width * scale))
+    resized_height = max(1, round(height * scale))
+    resized = cv2.resize(
+        image,
+        (resized_width, resized_height),
+        interpolation=cv2.INTER_AREA if scale < 1 else cv2.INTER_LINEAR,
+    )
+    pad_x = (target_width - resized_width) // 2
+    pad_y = (target_height - resized_height) // 2
+    letterboxed = np.full(
+        (target_height, target_width, image.shape[2]),
+        pad_value,
+        dtype=image.dtype,
+    )
+    letterboxed[
+        pad_y:pad_y + resized_height,
+        pad_x:pad_x + resized_width,
+    ] = resized
+    return letterboxed, scale, (pad_x, pad_y)
+
+
+def map_box_from_letterbox(box, scale, padding, image_shape):
+    """Map a box from letterboxed coordinates back to the source image."""
+    pad_x, pad_y = padding
+    x1, y1, x2, y2 = box
+    height, width = image_shape[:2]
+    return (
+        max(0, min(width, round((x1 - pad_x) / scale))),
+        max(0, min(height, round((y1 - pad_y) / scale))),
+        max(0, min(width, round((x2 - pad_x) / scale))),
+        max(0, min(height, round((y2 - pad_y) / scale))),
+    )
+
 
 def preprocess_face(face_bgr):
+    enhanced = enhance_image(face_bgr)
+    face_rgb = cv2.cvtColor(enhanced, cv2.COLOR_BGR2RGB)
+    letterboxed, _, _ = letterbox_image(face_rgb)
+    # The Keras model contains its own Rescaling(1 / 127.5, -1) layer.
+    return letterboxed.astype(np.float32)
 
-    face_rgb = cv2.cvtColor(
-        face_bgr,
-        cv2.COLOR_BGR2RGB
-    )
-
-    face_rgb = cv2.resize(
-        face_rgb,
-        IMG_SIZE,
-        interpolation=cv2.INTER_AREA
-    )
-
-    face_rgb = face_rgb.astype(
-        np.float32
-    )
-
-    # The Keras model contains its own Rescaling(1 / 127.5, -1)
-    # layer, so inference must receive RGB pixels in the original
-    # 0-255 range.
-    return face_rgb
-
-
-# ============================================================
-# IMAGE PREDICTION
-# ============================================================
 
 def predict_face(model, face_bgr):
-
-    processed = preprocess_face(
-        face_bgr
-    )
-
-    batch = np.expand_dims(
-        processed,
-        axis=0
-    )
-
-    prediction = model.predict(
-        batch,
-        verbose=0
-    )
-
-    probability_without_mask = float(
-        prediction[0][0]
-    )
-
-    return probability_without_mask
+    batch = np.expand_dims(preprocess_face(face_bgr), axis=0)
+    prediction = model.predict(batch, verbose=0)
+    return float(prediction[0][0])
 
 
-# ============================================================
-# FACE DETECTION
-# ============================================================
-
-def detect_largest_face(
-    image_rgb,
-    face_cascade
-):
-
-    gray = cv2.cvtColor(
-        image_rgb,
-        cv2.COLOR_RGB2GRAY
-    )
-
-    gray = cv2.createCLAHE(
-        clipLimit=2.0,
-        tileGridSize=(8, 8)
-    ).apply(gray)
-
-    # Browser camera photos vary considerably in size and lighting.
-    # Retry with a more permissive detector when the strict pass misses
-    # a face, while still selecting only the largest detected face.
+def detect_faces(image_bgr, face_cascade):
+    enhanced = enhance_image(image_bgr)
+    gray = cv2.cvtColor(enhanced, cv2.COLOR_BGR2GRAY)
     faces = face_cascade.detectMultiScale(
         gray,
         scaleFactor=1.08,
         minNeighbors=5,
-        minSize=(40, 40)
+        minSize=(40, 40),
     )
-
     if len(faces) == 0:
         faces = face_cascade.detectMultiScale(
             gray,
             scaleFactor=1.05,
             minNeighbors=3,
-            minSize=(32, 32)
+            minSize=(32, 32),
         )
-
     if len(faces) == 0:
-        return None
+        return []
 
-    x, y, w, h = max(
-        faces,
-        key=lambda f: f[2] * f[3]
-    )
+    try:
+        grouped_faces, _ = cv2.groupRectangles(
+            faces.tolist() * 2,
+            1,
+            0.2,
+        )
+        faces = grouped_faces if len(grouped_faces) else faces
+    except cv2.error:
+        pass
 
-    pad = int(max(w, h) * 0.20)
+    boxes = []
+    image_height, image_width = image_bgr.shape[:2]
+    for x, y, width, height in faces:
+        pad = int(max(width, height) * 0.20)
+        boxes.append((
+            max(0, x - pad),
+            max(0, y - pad),
+            min(image_width, x + width + pad),
+            min(image_height, y + height + pad),
+        ))
+    return boxes
 
-    x1 = max(0, x - pad)
-    y1 = max(0, y - pad)
 
-    x2 = min(
-        image_rgb.shape[1],
-        x + w + pad
-    )
+def detect_largest_face(image_rgb, face_cascade):
+    boxes = detect_faces(cv2.cvtColor(image_rgb, cv2.COLOR_RGB2BGR), face_cascade)
+    return max(boxes, key=lambda box: (box[2] - box[0]) * (box[3] - box[1]), default=None)
 
-    y2 = min(
-        image_rgb.shape[0],
-        y + h + pad
-    )
 
-    return (
-        x1,
-        y1,
-        x2,
-        y2
-    )
+def predict_image(image_rgb, model, face_cascade):
+    image_bgr = cv2.cvtColor(image_rgb, cv2.COLOR_RGB2BGR)
+    detections = []
+    for x1, y1, x2, y2 in detect_faces(image_bgr, face_cascade):
+        face = image_bgr[y1:y2, x1:x2]
+        if face.size == 0:
+            continue
+        probability = predict_face(model, face)
+        label = int(probability >= THRESHOLD)
+        confidence = probability if label else 1.0 - probability
+        detections.append({
+            "box": (x1, y1, x2, y2),
+            "label": label,
+            "confidence": confidence,
+        })
+    return detections
+
+
+def draw_detections(image_rgb, detections):
+    image_bgr = cv2.cvtColor(image_rgb, cv2.COLOR_RGB2BGR)
+    for detection in detections:
+        x1, y1, x2, y2 = detection["box"]
+        label = detection["label"]
+        confidence = detection["confidence"]
+        color = color_bgr[label]
+        text = f"{labels_dict[label]} {confidence * 100:.0f}%"
+        cv2.rectangle(image_bgr, (x1, y1), (x2, y2), color, 3)
+        (text_width, text_height), baseline = cv2.getTextSize(
+            text, LABEL_FONT, 0.65, 2
+        )
+        label_x = max(x1, min(x2 - text_width, x1))
+        label_y = min(y2, y1 + text_height + baseline + 8)
+        cv2.rectangle(
+            image_bgr,
+            (label_x, y1),
+            (label_x + text_width + 8, label_y),
+            color,
+            -1,
+        )
+        cv2.putText(
+            image_bgr,
+            text,
+            (label_x + 4, label_y - baseline - 4),
+            LABEL_FONT,
+            0.65,
+            (255, 255, 255),
+            2,
+            cv2.LINE_AA,
+        )
+    return cv2.cvtColor(image_bgr, cv2.COLOR_BGR2RGB)
 
 
 # ============================================================
@@ -382,7 +435,7 @@ def resize_for_processing(frame):
 # LIVE FACE DETECTION + MASK PREDICTION
 # ============================================================
 
-def detect_and_annotate(
+def _legacy_detect_and_annotate(
     frame,
     model,
     face_cascade,
@@ -738,6 +791,83 @@ def detect_and_annotate(
 
 
 # ============================================================
+# STREAMING FRAME PIPELINE
+# ============================================================
+
+def detect_and_annotate(
+    frame,
+    model,
+    face_cascade,
+    history,
+    frame_counter,
+    cached_predictions,
+):
+    """Process one browser-camera frame using the shared image pipeline."""
+    processed_frame, scale = resize_for_processing(frame)
+    boxes = detect_faces(processed_frame, face_cascade)
+    if not boxes:
+        history.clear()
+        cached_predictions.clear()
+        cv2.putText(
+            frame,
+            "No face detected",
+            (20, 40),
+            LABEL_FONT,
+            0.8,
+            (255, 255, 255),
+            2,
+            cv2.LINE_AA,
+        )
+        return frame
+
+    detections = []
+    run_inference = frame_counter % INFERENCE_EVERY_N_FRAMES == 0
+    valid_keys = set()
+    for x1, y1, x2, y2 in boxes:
+        key = (round(x1 / 40), round(y1 / 40), round(x2 / 40), round(y2 / 40))
+        valid_keys.add(key)
+        if run_inference or key not in cached_predictions:
+            crop = processed_frame[y1:y2, x1:x2]
+            if crop.size:
+                cached_predictions[key] = predict_face(model, crop)
+        probability = cached_predictions.get(key, 0.5)
+        history.setdefault(key, deque(maxlen=SMOOTH_FRAMES)).append(probability)
+        average = float(np.mean(history[key]))
+        label = int(average >= THRESHOLD)
+        detections.append({
+            "box": (
+                round(x1 / scale),
+                round(y1 / scale),
+                round(x2 / scale),
+                round(y2 / scale),
+            ),
+            "label": label,
+            "confidence": average if label else 1.0 - average,
+        })
+
+    for key in list(cached_predictions):
+        if key not in valid_keys:
+            del cached_predictions[key]
+    for key in list(history):
+        if key not in valid_keys:
+            del history[key]
+
+    annotated_rgb = draw_detections(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB), detections)
+    annotated = cv2.cvtColor(annotated_rgb, cv2.COLOR_RGB2BGR)
+    cv2.putText(
+        annotated,
+        "LIVE",
+        (20, 35),
+        LABEL_FONT,
+        0.75,
+        (0, 220, 100),
+        2,
+        cv2.LINE_AA,
+    )
+    return annotated
+
+
+# ============================================================
 # HERO
 # ============================================================
 
@@ -839,88 +969,9 @@ if model_loaded:
                 image
             )
 
-            result = detect_largest_face(
-                image_rgb,
-                face_cascade
-            )
-
-            display_image = image_rgb.copy()
-
-            if result is not None:
-
-                x1, y1, x2, y2 = result
-
-                face_rgb = image_rgb[
-                    y1:y2,
-                    x1:x2
-                ]
-
-                face_bgr = cv2.cvtColor(
-                    face_rgb,
-                    cv2.COLOR_RGB2BGR
-                )
-
-                probability = predict_face(
-                    model,
-                    face_bgr
-                )
-
-                label = int(
-                    probability >= THRESHOLD
-                )
-
-                if label == 1:
-
-                    confidence = probability
-
-                else:
-
-                    confidence = (
-                        1.0 - probability
-                    )
-
-                if confidence < CONFIDENCE_THR:
-
-                    text = (
-                        f"Uncertain "
-                        f"{confidence * 100:.1f}%"
-                    )
-
-                    color = (
-                        255,
-                        165,
-                        0
-                    )
-
-                else:
-
-                    text = (
-                        f"{labels_dict[label]} "
-                        f"{confidence * 100:.1f}%"
-                    )
-
-                    color = color_bgr[label]
-
-                cv2.rectangle(
-                    display_image,
-                    (x1, y1),
-                    (x2, y2),
-                    color,
-                    3
-                )
-
-                cv2.putText(
-                    display_image,
-                    text,
-                    (x1, max(y1 - 12, 30)),
-                    cv2.FONT_HERSHEY_SIMPLEX,
-                    0.8,
-                    color,
-                    2,
-                    cv2.LINE_AA
-                )
-
-            else:
+            detections = predict_image(image_rgb, model, face_cascade)
+            display_image = draw_detections(image_rgb, detections)
+            if not detections:
                 st.warning(
                     "No face detected. Move closer, face the camera, "
                     "and try again."
@@ -953,6 +1004,9 @@ if model_loaded:
 
         if not webcam_enabled:
             st.session_state.pop("webcam_capture", None)
+            st.session_state.pop("webcam_history", None)
+            st.session_state.pop("webcam_predictions", None)
+            st.session_state.pop("webcam_frame_counter", None)
             st.info(
                 "Webcam is off. Enable it above when you are ready "
                 "to take a photo."
@@ -978,86 +1032,27 @@ if model_loaded:
                 image
             )
 
-            result = detect_largest_face(
-                image_rgb,
-                face_cascade
+            webcam_history = st.session_state.setdefault(
+                "webcam_history", {}
             )
-
-            display_image = image_rgb.copy()
-
-            if result is not None:
-
-                x1, y1, x2, y2 = result
-
-                face_rgb = image_rgb[
-                    y1:y2,
-                    x1:x2
-                ]
-
-                probability = predict_face(
-                    model,
-                    cv2.cvtColor(
-                        face_rgb,
-                        cv2.COLOR_RGB2BGR
-                    )
-                )
-
-                label = int(
-                    probability >= THRESHOLD
-                )
-
-                confidence = (
-                    probability
-                    if label == 1
-                    else 1.0 - probability
-                )
-
-                if confidence < CONFIDENCE_THR:
-
-                    text = (
-                        f"Uncertain "
-                        f"{confidence * 100:.1f}%"
-                    )
-
-                    color = (
-                        255,
-                        165,
-                        0
-                    )
-
-                else:
-
-                    text = (
-                        f"{labels_dict[label]} "
-                        f"{confidence * 100:.1f}%"
-                    )
-
-                    color = color_bgr[label]
-
-                cv2.rectangle(
-                    display_image,
-                    (x1, y1),
-                    (x2, y2),
-                    color,
-                    3
-                )
-
-                cv2.putText(
-                    display_image,
-                    text,
-                    (x1, max(y1 - 12, 30)),
-                    cv2.FONT_HERSHEY_SIMPLEX,
-                    0.8,
-                    color,
-                    2,
-                    cv2.LINE_AA
-                )
-
-            else:
-
-                st.warning(
-                    "No face detected in the camera image."
-                )
+            webcam_predictions = st.session_state.setdefault(
+                "webcam_predictions", {}
+            )
+            webcam_frame_counter = st.session_state.get(
+                "webcam_frame_counter", 0
+            ) + 1
+            st.session_state["webcam_frame_counter"] = webcam_frame_counter
+            display_bgr = detect_and_annotate(
+                cv2.cvtColor(image_rgb, cv2.COLOR_RGB2BGR),
+                model,
+                face_cascade,
+                webcam_history,
+                webcam_frame_counter,
+                webcam_predictions,
+            )
+            display_image = cv2.cvtColor(
+                display_bgr, cv2.COLOR_BGR2RGB
+            )
 
             st.image(
                 display_image,
