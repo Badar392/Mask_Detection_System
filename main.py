@@ -1214,8 +1214,8 @@ if model_loaded:
 
     tab_upload, tab_webcam = st.tabs(
         [
-            "ðŸ“¤ Upload Image",
-            "ðŸŽ¥ Live Webcam"
+            "Upload Image",
+            "Live Webcam",
         ]
     )
 
@@ -1280,35 +1280,27 @@ if model_loaded:
             '</div>',
         )
 
-        webcam_enabled = st.toggle(
-            "Enable webcam",
-            value=False,
-            key="webcam_enabled",
-            help="Allow the browser camera to capture a frame for detection.",
+        st.info(
+            "Use the single Start/Stop control below. Frames are processed "
+            "directly in memory; no snapshots or intermediate files are saved."
         )
-
-        if not webcam_enabled:
-            st.info(
-                "Webcam is off. Enable it above when you are ready "
-                "to capture a frame."
-            )
-        else:
-            st.info(
-                "Live browser video is processed directly in memory. "
-                "No snapshots or intermediate image files are saved."
-            )
-            webrtc_streamer(
-                key="maskguard-live-camera",
-                mode=WebRtcMode.SENDRECV,
-                video_processor_factory=lambda: MaskVideoProcessor(
-                    model, face_cascade
-                ),
-                media_stream_constraints={
-                    "video": {"facingMode": "user"},
-                    "audio": False,
-                },
-                async_processing=True,
-            )
+        webrtc_streamer(
+            key="maskguard-live-camera",
+            mode=WebRtcMode.SENDRECV,
+            video_processor_factory=lambda: MaskVideoProcessor(
+                model, face_cascade
+            ),
+            media_stream_constraints={
+                "video": {"facingMode": "user"},
+                "audio": False,
+            },
+            rtc_configuration={
+                "iceServers": [
+                    {"urls": ["stun:stun.l.google.com:19302"]}
+                ]
+            },
+            async_processing=True,
+        )
 
 
 st.html(
