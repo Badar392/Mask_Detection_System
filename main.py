@@ -16,6 +16,7 @@ import textwrap
 
 import streamlit as st
 import cv2
+import av
 
 cv2.setNumThreads(1)
 
@@ -26,6 +27,8 @@ from PIL import ImageOps
 from collections import deque
 
 from tensorflow.keras.models import load_model
+from mask_pipeline import process_frame as shared_process_frame
+from streamlit_webrtc import VideoProcessorBase, WebRtcMode, webrtc_streamer
 
 
 # ============================================================
@@ -350,21 +353,11 @@ def detect_largest_face(image_rgb, face_cascade):
 
 
 def predict_image(image_rgb, model, face_cascade):
+    """Run the same shared processing used by browser video frames."""
     image_bgr = cv2.cvtColor(image_rgb, cv2.COLOR_RGB2BGR)
-    detections = []
-    for x1, y1, x2, y2 in detect_faces(image_bgr, face_cascade):
-        face = image_bgr[y1:y2, x1:x2]
-        if face.size == 0:
-            continue
-        probability = predict_face(model, face)
-        label = int(probability >= THRESHOLD)
-        confidence = probability if label else 1.0 - probability
-        detections.append({
-            "box": (x1, y1, x2, y2),
-            "label": label,
-            "confidence": confidence,
-        })
-    return detections
+    return shared_process_frame(
+        image_bgr, model, face_cascade, {}, {}, 1
+    )
 
 
 def draw_detections(image_rgb, detections):
@@ -803,6 +796,17 @@ def detect_and_annotate(
     cached_predictions,
 ):
     """Process one browser-camera frame using the shared image pipeline."""
+    return shared_process_frame(
+        frame,
+        model,
+        face_cascade,
+        history,
+        cached_predictions,
+        frame_counter,
+    )
+
+    # Kept below only as historical reference; all callers use the shared
+    # pipeline above so uploads and browser video cannot drift apart.
     processed_frame, scale = resize_for_processing(frame)
     boxes = detect_faces(processed_frame, face_cascade)
     if not boxes:
@@ -865,6 +869,30 @@ def detect_and_annotate(
         cv2.LINE_AA,
     )
     return annotated
+
+
+class MaskVideoProcessor(VideoProcessorBase):
+    """Apply the same synchronous pipeline to every browser video frame."""
+
+    def __init__(self, model, face_cascade):
+        self.model = model
+        self.face_cascade = face_cascade
+        self.history = {}
+        self.cached_predictions = {}
+        self.frame_counter = 0
+
+    def recv(self, frame):
+        self.frame_counter += 1
+        image_bgr = frame.to_ndarray(format="bgr24")
+        output = shared_process_frame(
+            image_bgr,
+            self.model,
+            self.face_cascade,
+            self.history,
+            self.cached_predictions,
+            self.frame_counter,
+        )
+        return av.VideoFrame.from_ndarray(output, format="bgr24")
 
 
 # ============================================================
@@ -969,13 +997,8 @@ if model_loaded:
                 image
             )
 
-            detections = predict_image(image_rgb, model, face_cascade)
-            display_image = draw_detections(image_rgb, detections)
-            if not detections:
-                st.warning(
-                    "No face detected. Move closer, face the camera, "
-                    "and try again."
-                )
+            display_bgr = predict_image(image_rgb, model, face_cascade)
+            display_image = cv2.cvtColor(display_bgr, cv2.COLOR_BGR2RGB)
 
             st.image(
                 display_image,
@@ -994,69 +1017,32 @@ if model_loaded:
             '</div>',
         )
 
-        camera_image = None
         webcam_enabled = st.toggle(
             "Enable webcam",
             value=False,
             key="webcam_enabled",
-            help="Allow the browser camera to be opened for a photo.",
+            help="Allow the browser camera to stream frames for detection.",
         )
 
         if not webcam_enabled:
-            st.session_state.pop("webcam_capture", None)
-            st.session_state.pop("webcam_history", None)
-            st.session_state.pop("webcam_predictions", None)
-            st.session_state.pop("webcam_frame_counter", None)
             st.info(
                 "Webcam is off. Enable it above when you are ready "
-                "to take a photo."
+                "to start live detection."
             )
         else:
             st.info(
-                "Take a photo with your browser camera. The image is "
-                "processed after capture and is not stored by the app."
+                "Frames stay in your browser session and are processed "
+                "through the same enhancement, letterbox, inference, and "
+                "annotation pipeline as uploaded images."
             )
-
-            camera_image = st.camera_input(
-                "Open webcam",
-                key="webcam_capture"
-            )
-
-        if webcam_enabled and camera_image is not None:
-
-            image = ImageOps.exif_transpose(
-                Image.open(camera_image)
-            ).convert("RGB")
-
-            image_rgb = np.array(
-                image
-            )
-
-            webcam_history = st.session_state.setdefault(
-                "webcam_history", {}
-            )
-            webcam_predictions = st.session_state.setdefault(
-                "webcam_predictions", {}
-            )
-            webcam_frame_counter = st.session_state.get(
-                "webcam_frame_counter", 0
-            ) + 1
-            st.session_state["webcam_frame_counter"] = webcam_frame_counter
-            display_bgr = detect_and_annotate(
-                cv2.cvtColor(image_rgb, cv2.COLOR_RGB2BGR),
-                model,
-                face_cascade,
-                webcam_history,
-                webcam_frame_counter,
-                webcam_predictions,
-            )
-            display_image = cv2.cvtColor(
-                display_bgr, cv2.COLOR_BGR2RGB
-            )
-
-            st.image(
-                display_image,
-                width="stretch"
+            webrtc_streamer(
+                key="mask-detection-camera",
+                mode=WebRtcMode.SENDRECV,
+                video_processor_factory=lambda: MaskVideoProcessor(
+                    model, face_cascade
+                ),
+                media_stream_constraints={"video": True, "audio": False},
+                async_processing=True,
             )
 
 
