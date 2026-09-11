@@ -35,6 +35,7 @@ A real-time computer vision application that detects whether a person is wearing
 Face_Mask_Detection_System/
 ├── main.py                     # Streamlit application (entry point)
 ├── face_mask_detector.keras    # Trained MobileNetV2 model (160x160 input)
+├── face_detection_yunet_2023mar.onnx # Headless YuNet face detector
 ├── detect_mask.py              # Optional standalone local script (not used by the Streamlit app)
 ├── requirements.txt            # Project dependencies
 ├── runtime.txt                 # Python version pin for Streamlit Cloud
@@ -104,7 +105,7 @@ read from a server-side `cv2.VideoCapture(0)` device. Use the component's
 Both uploaded images and browser-camera captures use the same pipeline:
 
 1. Enhance local contrast with CLAHE and apply gentle unsharp sharpening.
-2. Detect faces on the enhanced image and add a small context margin.
+2. Detect faces with the bundled YuNet DNN detector and add a small context margin.
 3. Letterbox each face to the model's exact 160x160 input without stretching.
 4. Map detections back to the original display image and draw the label inside
    the top edge of each box.
