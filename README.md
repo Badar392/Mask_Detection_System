@@ -94,9 +94,10 @@ This will launch the web interface in your browser, where you can:
 ### Live webcam notes
 
 The webcam tab keeps the camera disabled on initial load. Turn on **Enable
-webcam** to open the browser camera, capture a frame, and process it. The
-browser owns camera permission; images are captured in the browser and are not
-read from a server-side `cv2.VideoCapture(0)` device.
+webcam** to open the browser camera and start live frame processing. The
+browser owns camera permission; frames are captured in the browser and are not
+read from a server-side `cv2.VideoCapture(0)` device. Use the component's
+**Start live detection** and **Pause live detection** controls.
 
 ### Image pipeline
 

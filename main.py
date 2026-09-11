@@ -26,6 +26,7 @@ from PIL import ImageOps
 from collections import deque
 
 from tensorflow.keras.models import load_model
+from camera_input_live import camera_input_live
 
 
 # ============================================================
@@ -304,61 +305,76 @@ def predict_face(model, face_bgr):
 
 def detect_faces(image_bgr, face_cascade):
     enhanced = enhance_image(image_bgr)
-    gray = cv2.cvtColor(enhanced, cv2.COLOR_BGR2GRAY)
-    faces = face_cascade.detectMultiScale(
-        gray,
-        scaleFactor=1.08,
-        minNeighbors=5,
-        minSize=(40, 40),
-    )
-    if len(faces) == 0:
-        faces = face_cascade.detectMultiScale(
-            gray,
-            scaleFactor=1.05,
-            minNeighbors=3,
-            minSize=(32, 32),
-        )
-    if len(faces) == 0:
-        # Low-light/profile views often fail the frontal pass. The profile
-        # cascade is optional because deployments may not ship that XML.
+    gray_images = [
+        cv2.cvtColor(image_bgr, cv2.COLOR_BGR2GRAY),
+        cv2.cvtColor(enhanced, cv2.COLOR_BGR2GRAY),
+    ]
+    candidates = []
+    for gray in gray_images:
+        candidates.extend(face_cascade.detectMultiScale(
+            gray, scaleFactor=1.08, minNeighbors=4, minSize=(32, 32)
+        ))
+        candidates.extend(face_cascade.detectMultiScale(
+            gray, scaleFactor=1.04, minNeighbors=3, minSize=(24, 24)
+        ))
+
+    if not candidates:
         profile_path = cv2.data.haarcascades + "haarcascade_profileface.xml"
         profile = cv2.CascadeClassifier(profile_path)
         if not profile.empty():
-            faces = profile.detectMultiScale(
-                gray,
-                scaleFactor=1.05,
-                minNeighbors=3,
-                minSize=(32, 32),
-            )
-    if len(faces) == 0:
+            candidates.extend(profile.detectMultiScale(
+                gray_images[1], scaleFactor=1.04, minNeighbors=3, minSize=(24, 24)
+            ))
+    if not candidates:
         return []
 
-    try:
-        grouped_faces, _ = cv2.groupRectangles(
-            faces.tolist() * 2,
-            1,
-            0.2,
-        )
-        faces = grouped_faces if len(grouped_faces) else faces
-    except cv2.error:
-        pass
+    # Keep the strongest spatially distinct detections. groupRectangles can
+    # discard a valid single detection when the image has only one face.
+    candidates = sorted(candidates, key=lambda item: item[2] * item[3], reverse=True)
+    faces = []
+    for candidate in candidates:
+        x, y, width, height = candidate
+        overlaps = False
+        for kept_x, kept_y, kept_width, kept_height in faces:
+            ix1 = max(x, kept_x)
+            iy1 = max(y, kept_y)
+            ix2 = min(x + width, kept_x + kept_width)
+            iy2 = min(y + height, kept_y + kept_height)
+            intersection = max(0, ix2 - ix1) * max(0, iy2 - iy1)
+            union = (width * height) + (kept_width * kept_height) - intersection
+            if union and intersection / union > 0.35:
+                overlaps = True
+                break
+        if not overlaps:
+            faces.append(candidate)
 
-    boxes = []
+    detections = []
     image_height, image_width = image_bgr.shape[:2]
     for x, y, width, height in faces:
         pad = int(max(width, height) * 0.20)
-        boxes.append((
-            max(0, x - pad),
-            max(0, y - pad),
-            min(image_width, x + width + pad),
-            min(image_height, y + height + pad),
-        ))
-    return boxes
+        detections.append({
+            # Draw the detector's actual face rectangle. Padding is only for
+            # context supplied to the mask classifier.
+            "display_box": (
+                max(0, x), max(0, y),
+                min(image_width, x + width), min(image_height, y + height),
+            ),
+            "crop_box": (
+                max(0, x - pad), max(0, y - pad),
+                min(image_width, x + width + pad),
+                min(image_height, y + height + pad),
+            ),
+        })
+    return detections
 
 
 def detect_largest_face(image_rgb, face_cascade):
     boxes = detect_faces(cv2.cvtColor(image_rgb, cv2.COLOR_RGB2BGR), face_cascade)
-    return max(boxes, key=lambda box: (box[2] - box[0]) * (box[3] - box[1]), default=None)
+    return max(
+        (detection["display_box"] for detection in boxes),
+        key=lambda box: (box[2] - box[0]) * (box[3] - box[1]),
+        default=None,
+    )
 
 
 def predict_image(image_rgb, model, face_cascade):
@@ -840,8 +856,11 @@ def detect_and_annotate(
     detections = []
     run_inference = frame_counter % INFERENCE_EVERY_N_FRAMES == 0
     valid_keys = set()
-    for x1, y1, x2, y2 in boxes:
-        key = (round(x1 / 40), round(y1 / 40), round(x2 / 40), round(y2 / 40))
+    for detection in boxes:
+        x1, y1, x2, y2 = detection["crop_box"]
+        display_x1, display_y1, display_x2, display_y2 = detection["display_box"]
+        key = (round(display_x1 / 40), round(display_y1 / 40),
+               round(display_x2 / 40), round(display_y2 / 40))
         valid_keys.add(key)
         if run_inference or key not in cached_predictions:
             crop = processed_frame[y1:y2, x1:x2]
@@ -853,10 +872,10 @@ def detect_and_annotate(
         label = int(average >= THRESHOLD)
         detections.append({
             "box": (
-                round(x1 / scale),
-                round(y1 / scale),
-                round(x2 / scale),
-                round(y2 / scale),
+                round(display_x1 / scale),
+                round(display_y1 / scale),
+                round(display_x2 / scale),
+                round(display_y2 / scale),
             ),
             "label": label,
             "confidence": average if label else 1.0 - average,
@@ -910,8 +929,11 @@ def process_frame(
     detections = []
     valid_keys = set()
     run_inference = frame_counter % 2 == 0 or not cached_predictions
-    for x1, y1, x2, y2 in boxes:
-        key = (round(x1 / 40), round(y1 / 40), round(x2 / 40), round(y2 / 40))
+    for detection in boxes:
+        x1, y1, x2, y2 = detection["crop_box"]
+        display_x1, display_y1, display_x2, display_y2 = detection["display_box"]
+        key = (round(display_x1 / 40), round(display_y1 / 40),
+               round(display_x2 / 40), round(display_y2 / 40))
         valid_keys.add(key)
         crop = processed_frame[y1:y2, x1:x2]
         if crop.size == 0:
@@ -925,8 +947,8 @@ def process_frame(
         label = int(average >= THRESHOLD)
         detections.append({
             "box": (
-                round(x1 / scale), round(y1 / scale),
-                round(x2 / scale), round(y2 / scale),
+                round(display_x1 / scale), round(display_y1 / scale),
+                round(display_x2 / scale), round(display_y2 / scale),
             ),
             "label": label,
             "confidence": average if label else 1.0 - average,
@@ -1088,13 +1110,16 @@ if model_loaded:
             )
         else:
             st.info(
-                "The browser camera captures a frame. It is processed "
-                "through the same enhancement, letterbox, inference, and "
+                "Live browser frames are processed through the same "
+                "enhancement, face detection, letterbox, inference, and "
                 "annotation pipeline as uploaded images."
             )
-            camera_image = st.camera_input(
-                "Open webcam",
+            camera_image = camera_input_live(
+                debounce=300,
                 key="webcam_capture",
+                show_controls=True,
+                start_label="Start live detection",
+                stop_label="Pause live detection",
             )
 
             if camera_image is not None:
