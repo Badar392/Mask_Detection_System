@@ -142,6 +142,8 @@ IMG_SIZE = (160, 160)
 
 MODEL_PATH = "face_mask_detector.keras"
 FACE_DETECTOR_PATH = "face_detection_yunet_2023mar.onnx"
+FACE_CONFIDENCE_THRESHOLD = 0.70
+MAX_DETECTED_FACES = 1
 
 CLASS_NAMES = [
     "WithMask",
@@ -236,7 +238,7 @@ def load_face_detector():
             FACE_DETECTOR_PATH,
             "",
             (320, 320),
-            0.35,
+            FACE_CONFIDENCE_THRESHOLD,
             0.3,
             5000,
         )
@@ -323,8 +325,19 @@ def detect_faces(image_bgr, face_detector):
         face_detector.setInputSize((width, height))
         _, faces = face_detector.detect(image_bgr)
         if faces is not None and len(faces):
+            # YuNet rows are [x, y, w, h, landmarks..., confidence].
+            # Reject weak candidates before any crop/model inference, then
+            # keep only the strongest face as required by this application.
+            reliable_faces = [
+                face for face in faces
+                if float(face[-1]) >= FACE_CONFIDENCE_THRESHOLD
+            ]
+            reliable_faces.sort(
+                key=lambda face: (float(face[-1]), float(face[2] * face[3])),
+                reverse=True,
+            )
             detections = []
-            for face in faces:
+            for face in reliable_faces[:MAX_DETECTED_FACES]:
                 x, y, box_width, box_height = np.rint(face[:4]).astype(int)
                 x1 = max(0, x)
                 y1 = max(0, y)
@@ -411,6 +424,9 @@ def detect_faces(image_bgr, face_detector):
         if not overlaps:
             faces.append(candidate)
 
+    # The fallback has no confidence score. Keep only the largest candidate
+    # rather than allowing background-like cascade matches to reach inference.
+    faces = faces[:1]
     detections = []
     image_height, image_width = image_bgr.shape[:2]
     for x, y, width, height in faces:
