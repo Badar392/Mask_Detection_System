@@ -22,6 +22,7 @@ A real-time computer vision application that detects whether a person is wearing
 - **Python** – Core programming language
 - **TensorFlow / Keras** – Model building and training
 - **OpenCV** – Real-time webcam capture and face detection
+- **MediaPipe** – Robust face detection for masked and angled faces
 - **NumPy** – Numerical operations and data handling
 - **Pandas** – Data manipulation and preprocessing
 - **Scikit-learn** – Data splitting and evaluation utilities
