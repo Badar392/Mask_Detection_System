@@ -13,9 +13,13 @@ os.environ["TF_NUM_INTEROP_THREADS"] = "1"
 os.environ["OPENBLAS_NUM_THREADS"] = "1"
 
 import textwrap
+import base64
+from io import BytesIO
+from pathlib import Path
 
 import streamlit as st
 import cv2
+import streamlit.components.v1 as components
 
 cv2.setNumThreads(1)
 
@@ -26,7 +30,24 @@ from PIL import ImageOps
 from collections import deque
 
 from tensorflow.keras.models import load_model
-from camera_input_live import camera_input_live
+
+_camera_component = components.declare_component(
+    "mask_camera",
+    path=str((Path(__file__).parent / "camera_component").absolute()),
+)
+
+
+def camera_input_live(key=None):
+    """Return browser camera frames as BytesIO images until stopped."""
+    value = _camera_component(
+        key=key,
+        width=704,
+        height=530,
+        interval=500,
+    )
+    if not value:
+        return None
+    return BytesIO(base64.b64decode(value.split(",", 1)[-1]))
 
 
 # ============================================================
@@ -1114,13 +1135,7 @@ if model_loaded:
                 "enhancement, face detection, letterbox, inference, and "
                 "annotation pipeline as uploaded images."
             )
-            camera_image = camera_input_live(
-                debounce=300,
-                key="webcam_capture",
-                show_controls=True,
-                start_label="Start live detection",
-                stop_label="Pause live detection",
-            )
+            camera_image = camera_input_live(key="webcam_capture")
 
             if camera_image is not None:
                 image = ImageOps.exif_transpose(
