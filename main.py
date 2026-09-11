@@ -15,6 +15,8 @@ os.environ["OPENBLAS_NUM_THREADS"] = "1"
 
 import streamlit as st
 import cv2
+import av
+from streamlit_webrtc import VideoProcessorBase, WebRtcMode, webrtc_streamer
 
 cv2.setNumThreads(1)
 
@@ -40,6 +42,101 @@ st.set_page_config(
 
 
 # ============================================================
+# CUSTOM CSS
+# ============================================================
+
+st.html(
+    textwrap.dedent(
+    """
+    <style>
+
+    .stApp {
+        background:
+            radial-gradient(
+                circle at 20% 10%,
+                rgba(0, 200, 200, 0.08),
+                transparent 30%
+            ),
+            radial-gradient(
+                circle at 80% 20%,
+                rgba(0, 120, 255, 0.07),
+                transparent 30%
+            ),
+            #071116;
+        color: #e8f4f8;
+    }
+
+    .hero {
+        padding: 2rem 0 1rem 0;
+        text-align: center;
+    }
+
+    .hero-badge {
+        display: inline-block;
+        padding: 0.35rem 0.8rem;
+        border-radius: 20px;
+        background: rgba(0, 200, 200, 0.10);
+        border: 1px solid rgba(0, 200, 200, 0.25);
+        color: #00cccc;
+        font-size: 0.75rem;
+        font-weight: 700;
+        letter-spacing: 1px;
+        text-transform: uppercase;
+    }
+
+    .hero-title {
+        font-size: 3.5rem;
+        font-weight: 800;
+        margin: 0.6rem 0;
+        color: #e8f4f8;
+    }
+
+    .hero-title span {
+        color: #00cccc;
+    }
+
+    .hero-sub {
+        color: #6a8fa8;
+        font-size: 1rem;
+    }
+
+    .section-label {
+        color: #00cccc;
+        font-size: 0.75rem;
+        font-weight: 700;
+        letter-spacing: 1.5px;
+        text-transform: uppercase;
+        margin-bottom: 0.8rem;
+    }
+
+    .glass-card {
+        padding: 1.5rem;
+        border-radius: 18px;
+        background: rgba(255,255,255,0.025);
+        border: 1px solid rgba(255,255,255,0.08);
+    }
+
+    .status-card {
+        padding: 1rem;
+        border-radius: 14px;
+        background: rgba(0, 200, 200, 0.05);
+        border: 1px solid rgba(0, 200, 200, 0.15);
+        margin-top: 1rem;
+    }
+
+    .stImage img {
+        width: 100%;
+        max-height: 75vh;
+        object-fit: contain;
+    }
+
+    </style>
+    """
+    ),
+)
+
+
+# ============================================================
 # CONFIGURATION
 # ============================================================
 
@@ -47,6 +144,8 @@ IMG_SIZE = (160, 160)
 
 MODEL_PATH = "face_mask_detector.keras"
 FACE_DETECTOR_PATH = "face_detection_yunet_2023mar.onnx"
+FACE_CONFIDENCE_THRESHOLD = 0.70
+MAX_DETECTED_FACES = 1
 
 CLASS_NAMES = [
     "WithMask",
@@ -141,7 +240,7 @@ def load_face_detector():
             FACE_DETECTOR_PATH,
             "",
             (320, 320),
-            0.35,
+            FACE_CONFIDENCE_THRESHOLD,
             0.3,
             5000,
         )
@@ -228,8 +327,19 @@ def detect_faces(image_bgr, face_detector):
         face_detector.setInputSize((width, height))
         _, faces = face_detector.detect(image_bgr)
         if faces is not None and len(faces):
+            # YuNet rows are [x, y, w, h, landmarks..., confidence].
+            # Reject weak candidates before any crop/model inference, then
+            # keep only the strongest face as required by this application.
+            reliable_faces = [
+                face for face in faces
+                if float(face[-1]) >= FACE_CONFIDENCE_THRESHOLD
+            ]
+            reliable_faces.sort(
+                key=lambda face: (float(face[-1]), float(face[2] * face[3])),
+                reverse=True,
+            )
             detections = []
-            for face in faces:
+            for face in reliable_faces[:MAX_DETECTED_FACES]:
                 x, y, box_width, box_height = np.rint(face[:4]).astype(int)
                 x1 = max(0, x)
                 y1 = max(0, y)
@@ -316,6 +426,9 @@ def detect_faces(image_bgr, face_detector):
         if not overlaps:
             faces.append(candidate)
 
+    # The fallback has no confidence score. Keep only the largest candidate
+    # rather than allowing background-like cascade matches to reach inference.
+    faces = faces[:1]
     detections = []
     image_height, image_width = image_bgr.shape[:2]
     for x, y, width, height in faces:
@@ -961,8 +1074,55 @@ def process_frame(
     return output
 
 
-st.title("MaskGuard AI")
-st.caption("Face mask detection using deep learning")
+# ============================================================
+# HERO
+# ============================================================
+
+class MaskVideoProcessor(VideoProcessorBase):
+    """Run human-face detection and mask classification on WebRTC frames."""
+
+    def __init__(self, model, face_detector):
+        self.model = model
+        self.face_detector = face_detector
+        self.history = {}
+        self.predictions = {}
+        self.frame_counter = 0
+
+    def recv(self, frame):
+        self.frame_counter += 1
+        image_bgr = frame.to_ndarray(format="bgr24")
+        annotated = process_frame(
+            image_bgr,
+            self.model,
+            self.face_detector,
+            self.history,
+            self.predictions,
+            self.frame_counter,
+        )
+        return av.VideoFrame.from_ndarray(annotated, format="bgr24")
+
+
+st.html(
+    textwrap.dedent(
+    """
+    <div class="hero">
+
+        <div class="hero-badge">
+            AI-Powered Detection
+        </div>
+
+        <h1 class="hero-title">
+            Mask<span>Guard</span> AI
+        </h1>
+
+        <p class="hero-sub">
+            Face mask detection using Deep Learning
+        </p>
+
+    </div>
+    """
+    ),
+)
 
 
 # ============================================================
@@ -1011,7 +1171,11 @@ if model_loaded:
 
     with tab_upload:
 
-        st.subheader("Image Detection")
+        st.html(
+            '<div class="section-label">'
+            'Image Detection'
+            '</div>',
+        )
 
         uploaded_file = st.file_uploader(
             "Upload a face image",
@@ -1056,7 +1220,11 @@ if model_loaded:
 
     with tab_webcam:
 
-        st.subheader("Webcam Capture")
+        st.html(
+            '<div class="section-label">'
+            'Live Detection'
+            '</div>',
+        )
 
         webcam_enabled = st.toggle(
             "Enable webcam",
@@ -1072,36 +1240,36 @@ if model_loaded:
             )
         else:
             st.info(
-                "Streamlit's Python-only camera API captures one frame at a "
-                "time. Each captured image is passed "
-                "through the same human-face detection and mask prediction "
-                "pipeline as uploads. Continuous live video requires a "
-                "browser JavaScript/WebRTC component."
+                "Live browser video is processed directly in memory. "
+                "No snapshots or intermediate image files are saved."
             )
-            camera_image = st.camera_input(
-                "Capture webcam frame",
-                key="webcam_capture",
+            webrtc_streamer(
+                key="maskguard-live-camera",
+                mode=WebRtcMode.SENDRECV,
+                video_processor_factory=lambda: MaskVideoProcessor(
+                    model, face_cascade
+                ),
+                media_stream_constraints={
+                    "video": {"facingMode": "user"},
+                    "audio": False,
+                },
+                async_processing=True,
             )
-            if camera_image is not None:
-                image = ImageOps.exif_transpose(
-                    Image.open(camera_image)
-                ).convert("RGB")
-                image_rgb = np.array(image)
-                face_count = detection_status(image_rgb, face_cascade)
-                display_bgr = predict_image(image_rgb, model, face_cascade)
-                if face_count == 0:
-                    st.warning(
-                        "No human face detected in this capture. Move closer, "
-                        "face the camera, and capture again."
-                    )
-                else:
-                    st.success(
-                        f"Detected {face_count} human face(s); mask prediction complete."
-                    )
-                st.image(
-                    cv2.cvtColor(display_bgr, cv2.COLOR_BGR2RGB),
-                    width="stretch",
-                )
 
 
-st.caption("MaskGuard AI - Face Mask Detection System")
+st.html(
+    textwrap.dedent(
+    """
+    <div style="
+        text-align:center;
+        padding:2rem 0 1rem 0;
+        color:#4a6a7e;
+        font-size:0.75rem;
+    ">
+        MaskGuard AI | Face Mask Detection System
+        <br>
+        TensorFlow | OpenCV | Streamlit
+    </div>
+    """
+    ),
+)
