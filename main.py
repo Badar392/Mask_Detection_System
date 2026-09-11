@@ -319,6 +319,18 @@ def detect_faces(image_bgr, face_cascade):
             minSize=(32, 32),
         )
     if len(faces) == 0:
+        # Low-light/profile views often fail the frontal pass. The profile
+        # cascade is optional because deployments may not ship that XML.
+        profile_path = cv2.data.haarcascades + "haarcascade_profileface.xml"
+        profile = cv2.CascadeClassifier(profile_path)
+        if not profile.empty():
+            faces = profile.detectMultiScale(
+                gray,
+                scaleFactor=1.05,
+                minNeighbors=3,
+                minSize=(32, 32),
+            )
+    if len(faces) == 0:
         return []
 
     try:
@@ -363,8 +375,12 @@ def draw_detections(image_rgb, detections):
         x1, y1, x2, y2 = detection["box"]
         label = detection["label"]
         confidence = detection["confidence"]
-        color = color_bgr[label]
-        text = f"{labels_dict[label]} {confidence * 100:.0f}%"
+        if confidence < CONFIDENCE_THR:
+            color = (0, 165, 255)
+            text = f"Uncertain {confidence * 100:.0f}%"
+        else:
+            color = color_bgr[label]
+            text = f"{labels_dict[label]} {confidence * 100:.0f}%"
         cv2.rectangle(image_bgr, (x1, y1), (x2, y2), color, 3)
         (text_width, text_height), baseline = cv2.getTextSize(
             text, LABEL_FONT, 0.65, 2
@@ -884,7 +900,7 @@ def process_frame(
     if not boxes:
         history.clear()
         cached_predictions.clear()
-        output = frame_bgr.copy()
+        output = enhance_image(frame_bgr)
         cv2.putText(
             output, "No face detected", (20, 40), LABEL_FONT, 0.8,
             (255, 255, 255), 2, cv2.LINE_AA,
@@ -923,8 +939,9 @@ def process_frame(
         if key not in valid_keys:
             del history[key]
 
+    enhanced_frame = enhance_image(frame_bgr)
     annotated_rgb = draw_detections(
-        cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2RGB), detections
+        cv2.cvtColor(enhanced_frame, cv2.COLOR_BGR2RGB), detections
     )
     output = cv2.cvtColor(annotated_rgb, cv2.COLOR_RGB2BGR)
     cv2.putText(
