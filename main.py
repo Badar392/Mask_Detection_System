@@ -326,26 +326,47 @@ def predict_face(model, face_bgr):
 
 def detect_faces(image_bgr, face_cascade):
     enhanced = enhance_image(image_bgr)
-    gray_images = [
+    candidates = []
+    gray_images = (
         cv2.cvtColor(image_bgr, cv2.COLOR_BGR2GRAY),
         cv2.cvtColor(enhanced, cv2.COLOR_BGR2GRAY),
-    ]
-    candidates = []
+    )
     for gray in gray_images:
-        candidates.extend(face_cascade.detectMultiScale(
-            gray, scaleFactor=1.08, minNeighbors=4, minSize=(32, 32)
-        ))
-        candidates.extend(face_cascade.detectMultiScale(
-            gray, scaleFactor=1.04, minNeighbors=3, minSize=(24, 24)
-        ))
+        for scale in (1.0, 1.5):
+            detection_image = gray
+            if scale != 1.0:
+                detection_image = cv2.resize(
+                    gray, None, fx=scale, fy=scale, interpolation=cv2.INTER_CUBIC
+                )
+            detected = face_cascade.detectMultiScale(
+                detection_image,
+                scaleFactor=1.05,
+                minNeighbors=3,
+                minSize=(24, 24),
+            )
+            for x, y, width, height in detected:
+                candidates.append((
+                    round(x / scale),
+                    round(y / scale),
+                    round(width / scale),
+                    round(height / scale),
+                ))
 
     if not candidates:
         profile_path = cv2.data.haarcascades + "haarcascade_profileface.xml"
         profile = cv2.CascadeClassifier(profile_path)
         if not profile.empty():
-            candidates.extend(profile.detectMultiScale(
-                gray_images[1], scaleFactor=1.04, minNeighbors=3, minSize=(24, 24)
-            ))
+            detected = profile.detectMultiScale(
+                cv2.resize(gray_images[1], None, fx=1.5, fy=1.5,
+                           interpolation=cv2.INTER_CUBIC),
+                scaleFactor=1.05,
+                minNeighbors=3,
+                minSize=(24, 24),
+            )
+            candidates.extend((
+                round(x / 1.5), round(y / 1.5),
+                round(width / 1.5), round(height / 1.5),
+            ) for x, y, width, height in detected)
     if not candidates:
         return []
 
@@ -1047,6 +1068,16 @@ def render_webcam(model, face_cascade):
                 history,
                 predictions,
                 frame_counter,
+            )
+            cv2.putText(
+                annotated,
+                "Face not found - move closer and face the camera",
+                (20, 70),
+                LABEL_FONT,
+                0.55,
+                (0, 165, 255),
+                2,
+                cv2.LINE_AA,
             )
 
     output_slot.image(
