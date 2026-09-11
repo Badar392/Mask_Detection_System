@@ -12,14 +12,9 @@ os.environ["TF_NUM_INTRAOP_THREADS"] = "1"
 os.environ["TF_NUM_INTEROP_THREADS"] = "1"
 os.environ["OPENBLAS_NUM_THREADS"] = "1"
 
-import textwrap
-import base64
-from io import BytesIO
-from pathlib import Path
 
 import streamlit as st
 import cv2
-import streamlit.components.v1 as components
 
 cv2.setNumThreads(1)
 
@@ -31,24 +26,6 @@ from collections import deque
 
 from tensorflow.keras.models import load_model
 
-_camera_component = components.declare_component(
-    "mask_camera",
-    path=str((Path(__file__).parent / "camera_component").absolute()),
-)
-
-
-def camera_input_live(key=None):
-    """Return browser camera frames as BytesIO images until stopped."""
-    value = _camera_component(
-        key=key,
-        width=704,
-        height=530,
-        interval=500,
-    )
-    if not value:
-        return None
-    return BytesIO(base64.b64decode(value.split(",", 1)[-1]))
-
 
 # ============================================================
 # PAGE CONFIGURATION
@@ -59,101 +36,6 @@ st.set_page_config(
     page_icon="😷",
     layout="wide",
     initial_sidebar_state="collapsed",
-)
-
-
-# ============================================================
-# CUSTOM CSS
-# ============================================================
-
-st.html(
-    textwrap.dedent(
-    """
-    <style>
-
-    .stApp {
-        background:
-            radial-gradient(
-                circle at 20% 10%,
-                rgba(0, 200, 200, 0.08),
-                transparent 30%
-            ),
-            radial-gradient(
-                circle at 80% 20%,
-                rgba(0, 120, 255, 0.07),
-                transparent 30%
-            ),
-            #071116;
-        color: #e8f4f8;
-    }
-
-    .hero {
-        padding: 2rem 0 1rem 0;
-        text-align: center;
-    }
-
-    .hero-badge {
-        display: inline-block;
-        padding: 0.35rem 0.8rem;
-        border-radius: 20px;
-        background: rgba(0, 200, 200, 0.10);
-        border: 1px solid rgba(0, 200, 200, 0.25);
-        color: #00cccc;
-        font-size: 0.75rem;
-        font-weight: 700;
-        letter-spacing: 1px;
-        text-transform: uppercase;
-    }
-
-    .hero-title {
-        font-size: 3.5rem;
-        font-weight: 800;
-        margin: 0.6rem 0;
-        color: #e8f4f8;
-    }
-
-    .hero-title span {
-        color: #00cccc;
-    }
-
-    .hero-sub {
-        color: #6a8fa8;
-        font-size: 1rem;
-    }
-
-    .section-label {
-        color: #00cccc;
-        font-size: 0.75rem;
-        font-weight: 700;
-        letter-spacing: 1.5px;
-        text-transform: uppercase;
-        margin-bottom: 0.8rem;
-    }
-
-    .glass-card {
-        padding: 1.5rem;
-        border-radius: 18px;
-        background: rgba(255,255,255,0.025);
-        border: 1px solid rgba(255,255,255,0.08);
-    }
-
-    .status-card {
-        padding: 1rem;
-        border-radius: 14px;
-        background: rgba(0, 200, 200, 0.05);
-        border: 1px solid rgba(0, 200, 200, 0.15);
-        margin-top: 1rem;
-    }
-
-    .stImage img {
-        width: 100%;
-        max-height: 75vh;
-        object-fit: contain;
-    }
-
-    </style>
-    """
-    ),
 )
 
 
@@ -1071,90 +953,8 @@ def process_frame(
     return output
 
 
-@st.fragment
-def render_webcam(model, face_cascade):
-    """Keep camera reruns isolated from the rest of the Streamlit page."""
-    camera_image = camera_input_live(key="webcam_capture")
-    output_slot = st.empty()
-    if camera_image is None:
-        return
-
-    image = ImageOps.exif_transpose(
-        Image.open(camera_image)
-    ).convert("RGB")
-    image_bgr = cv2.cvtColor(np.array(image), cv2.COLOR_RGB2BGR)
-    history = st.session_state.setdefault("webcam_history", {})
-    predictions = st.session_state.setdefault("webcam_predictions", {})
-    frame_counter = st.session_state.get("webcam_frame_counter", 0) + 1
-    st.session_state["webcam_frame_counter"] = frame_counter
-
-    boxes = detect_faces(image_bgr, face_cascade)
-    if boxes:
-        annotated = process_frame(
-            image_bgr,
-            model,
-            face_cascade,
-            history,
-            predictions,
-            frame_counter,
-        )
-        st.session_state["webcam_last_frame"] = annotated
-        st.session_state["webcam_missed_frames"] = 0
-    else:
-        missed = st.session_state.get("webcam_missed_frames", 0) + 1
-        st.session_state["webcam_missed_frames"] = missed
-        annotated = st.session_state.get("webcam_last_frame")
-        if annotated is None or missed > 3:
-            annotated = process_frame(
-                image_bgr,
-                model,
-                face_cascade,
-                history,
-                predictions,
-                frame_counter,
-            )
-            cv2.putText(
-                annotated,
-                "Face not found - move closer and face the camera",
-                (20, 70),
-                LABEL_FONT,
-                0.55,
-                (0, 165, 255),
-                2,
-                cv2.LINE_AA,
-            )
-
-    output_slot.image(
-        cv2.cvtColor(annotated, cv2.COLOR_BGR2RGB),
-        width="stretch",
-    )
-
-
-# ============================================================
-# HERO
-# ============================================================
-
-st.html(
-    textwrap.dedent(
-    """
-    <div class="hero">
-
-        <div class="hero-badge">
-            AI-Powered Detection
-        </div>
-
-        <h1 class="hero-title">
-            Mask<span>Guard</span> AI
-        </h1>
-
-        <p class="hero-sub">
-            Face mask detection using Deep Learning
-        </p>
-
-    </div>
-    """
-    ),
-)
+st.title("MaskGuard AI")
+st.caption("Face mask detection using deep learning")
 
 
 # ============================================================
@@ -1203,11 +1003,7 @@ if model_loaded:
 
     with tab_upload:
 
-        st.html(
-            '<div class="section-label">'
-            'Image Detection'
-            '</div>',
-        )
+        st.subheader("Image Detection")
 
         uploaded_file = st.file_uploader(
             "Upload a face image",
@@ -1244,11 +1040,7 @@ if model_loaded:
 
     with tab_webcam:
 
-        st.html(
-            '<div class="section-label">'
-            'Live Detection'
-            '</div>',
-        )
+        st.subheader("Live Detection")
 
         webcam_enabled = st.toggle(
             "Enable webcam",
@@ -1258,42 +1050,30 @@ if model_loaded:
         )
 
         if not webcam_enabled:
-            st.session_state.pop("webcam_capture", None)
-            st.session_state.pop("webcam_history", None)
-            st.session_state.pop("webcam_predictions", None)
-            st.session_state.pop("webcam_last_frame", None)
-            st.session_state.pop("webcam_missed_frames", None)
-            st.session_state.pop("webcam_frame_counter", None)
             st.info(
                 "Webcam is off. Enable it above when you are ready "
-                "to take a photo."
+                "to capture a frame."
             )
         else:
             st.info(
-                "Live browser frames are processed through the same "
-                "enhancement, face detection, letterbox, inference, and "
-                "annotation pipeline as uploaded images."
+                "Capture a webcam frame below. The captured image is passed "
+                "through the same human-face detection and mask prediction "
+                "pipeline as uploads."
             )
-            render_webcam(model, face_cascade)
+            camera_image = st.camera_input(
+                "Capture webcam frame",
+                key="webcam_capture",
+            )
+            if camera_image is not None:
+                image = ImageOps.exif_transpose(
+                    Image.open(camera_image)
+                ).convert("RGB")
+                image_rgb = np.array(image)
+                display_bgr = predict_image(image_rgb, model, face_cascade)
+                st.image(
+                    cv2.cvtColor(display_bgr, cv2.COLOR_BGR2RGB),
+                    width="stretch",
+                )
 
 
-# ============================================================
-# FOOTER
-# ============================================================
-
-st.html(
-    textwrap.dedent(
-    """
-    <div style="
-        text-align:center;
-        padding:2rem 0 1rem 0;
-        color:#4a6a7e;
-        font-size:0.75rem;
-    ">
-        MaskGuard AI • Face Mask Detection System
-        <br>
-        TensorFlow • OpenCV • Streamlit
-    </div>
-    """
-    ),
-)
+st.caption("MaskGuard AI - Face Mask Detection System")

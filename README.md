@@ -95,10 +95,11 @@ This will launch the web interface in your browser, where you can:
 ### Live webcam notes
 
 The webcam tab keeps the camera disabled on initial load. Turn on **Enable
-webcam** to open the browser camera and start live frame processing. The
-browser owns camera permission; frames are captured in the browser and are not
-read from a server-side `cv2.VideoCapture(0)` device. Use the component's
-**Start live detection** and **Pause live detection** controls.
+webcam** and use Streamlit's native camera capture to take a frame. The
+browser owns camera permission; the captured image is processed in Python and
+is not read from a server-side `cv2.VideoCapture(0)` device. Continuous live
+browser video requires a JavaScript/WebRTC component and is intentionally not
+used here.
 
 ### Image pipeline
 
