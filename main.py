@@ -398,11 +398,23 @@ def detect_largest_face(image_rgb, face_cascade):
     )
 
 
-def predict_image(image_rgb, model, face_cascade):
+def predict_image(
+    image_rgb,
+    model,
+    face_cascade,
+    history=None,
+    cached_predictions=None,
+    frame_counter=1,
+):
     """Run the same shared processing used by browser video frames."""
     image_bgr = cv2.cvtColor(image_rgb, cv2.COLOR_RGB2BGR)
     return process_frame(
-        image_bgr, model, face_cascade, {}, {}, 1
+        image_bgr,
+        model,
+        face_cascade,
+        history,
+        cached_predictions,
+        frame_counter,
     )
 
 
@@ -994,6 +1006,55 @@ def process_frame(
     return output
 
 
+@st.fragment
+def render_webcam(model, face_cascade):
+    """Keep camera reruns isolated from the rest of the Streamlit page."""
+    camera_image = camera_input_live(key="webcam_capture")
+    output_slot = st.empty()
+    if camera_image is None:
+        return
+
+    image = ImageOps.exif_transpose(
+        Image.open(camera_image)
+    ).convert("RGB")
+    image_bgr = cv2.cvtColor(np.array(image), cv2.COLOR_RGB2BGR)
+    history = st.session_state.setdefault("webcam_history", {})
+    predictions = st.session_state.setdefault("webcam_predictions", {})
+    frame_counter = st.session_state.get("webcam_frame_counter", 0) + 1
+    st.session_state["webcam_frame_counter"] = frame_counter
+
+    boxes = detect_faces(image_bgr, face_cascade)
+    if boxes:
+        annotated = process_frame(
+            image_bgr,
+            model,
+            face_cascade,
+            history,
+            predictions,
+            frame_counter,
+        )
+        st.session_state["webcam_last_frame"] = annotated
+        st.session_state["webcam_missed_frames"] = 0
+    else:
+        missed = st.session_state.get("webcam_missed_frames", 0) + 1
+        st.session_state["webcam_missed_frames"] = missed
+        annotated = st.session_state.get("webcam_last_frame")
+        if annotated is None or missed > 3:
+            annotated = process_frame(
+                image_bgr,
+                model,
+                face_cascade,
+                history,
+                predictions,
+                frame_counter,
+            )
+
+    output_slot.image(
+        cv2.cvtColor(annotated, cv2.COLOR_BGR2RGB),
+        width="stretch",
+    )
+
+
 # ============================================================
 # HERO
 # ============================================================
@@ -1125,6 +1186,11 @@ if model_loaded:
 
         if not webcam_enabled:
             st.session_state.pop("webcam_capture", None)
+            st.session_state.pop("webcam_history", None)
+            st.session_state.pop("webcam_predictions", None)
+            st.session_state.pop("webcam_last_frame", None)
+            st.session_state.pop("webcam_missed_frames", None)
+            st.session_state.pop("webcam_frame_counter", None)
             st.info(
                 "Webcam is off. Enable it above when you are ready "
                 "to take a photo."
@@ -1135,18 +1201,7 @@ if model_loaded:
                 "enhancement, face detection, letterbox, inference, and "
                 "annotation pipeline as uploaded images."
             )
-            camera_image = camera_input_live(key="webcam_capture")
-
-            if camera_image is not None:
-                image = ImageOps.exif_transpose(
-                    Image.open(camera_image)
-                ).convert("RGB")
-                image_rgb = np.array(image)
-                display_bgr = predict_image(image_rgb, model, face_cascade)
-                st.image(
-                    cv2.cvtColor(display_bgr, cv2.COLOR_BGR2RGB),
-                    width="stretch",
-                )
+            render_webcam(model, face_cascade)
 
 
 # ============================================================
