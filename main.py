@@ -26,7 +26,6 @@ from PIL import ImageOps
 from collections import deque
 
 from tensorflow.keras.models import load_model
-from mask_pipeline import process_frame as shared_process_frame
 
 
 # ============================================================
@@ -353,7 +352,7 @@ def detect_largest_face(image_rgb, face_cascade):
 def predict_image(image_rgb, model, face_cascade):
     """Run the same shared processing used by browser video frames."""
     image_bgr = cv2.cvtColor(image_rgb, cv2.COLOR_RGB2BGR)
-    return shared_process_frame(
+    return process_frame(
         image_bgr, model, face_cascade, {}, {}, 1
     )
 
@@ -794,7 +793,7 @@ def detect_and_annotate(
     cached_predictions,
 ):
     """Process one browser-camera frame using the shared image pipeline."""
-    return shared_process_frame(
+    return process_frame(
         frame,
         model,
         face_cascade,
@@ -867,6 +866,72 @@ def detect_and_annotate(
         cv2.LINE_AA,
     )
     return annotated
+
+
+def process_frame(
+    frame_bgr,
+    model,
+    face_cascade,
+    history=None,
+    cached_predictions=None,
+    frame_counter=1,
+):
+    """Run the complete shared pipeline on a BGR image."""
+    history = {} if history is None else history
+    cached_predictions = {} if cached_predictions is None else cached_predictions
+    processed_frame, scale = resize_for_processing(frame_bgr)
+    boxes = detect_faces(processed_frame, face_cascade)
+    if not boxes:
+        history.clear()
+        cached_predictions.clear()
+        output = frame_bgr.copy()
+        cv2.putText(
+            output, "No face detected", (20, 40), LABEL_FONT, 0.8,
+            (255, 255, 255), 2, cv2.LINE_AA,
+        )
+        return output
+
+    detections = []
+    valid_keys = set()
+    run_inference = frame_counter % 2 == 0 or not cached_predictions
+    for x1, y1, x2, y2 in boxes:
+        key = (round(x1 / 40), round(y1 / 40), round(x2 / 40), round(y2 / 40))
+        valid_keys.add(key)
+        crop = processed_frame[y1:y2, x1:x2]
+        if crop.size == 0:
+            continue
+        if run_inference or key not in cached_predictions:
+            cached_predictions[key] = predict_face(model, crop)
+        probability = cached_predictions[key]
+        face_history = history.setdefault(key, deque(maxlen=SMOOTH_FRAMES))
+        face_history.append(probability)
+        average = float(np.mean(face_history))
+        label = int(average >= THRESHOLD)
+        detections.append({
+            "box": (
+                round(x1 / scale), round(y1 / scale),
+                round(x2 / scale), round(y2 / scale),
+            ),
+            "label": label,
+            "confidence": average if label else 1.0 - average,
+        })
+
+    for key in list(cached_predictions):
+        if key not in valid_keys:
+            del cached_predictions[key]
+    for key in list(history):
+        if key not in valid_keys:
+            del history[key]
+
+    annotated_rgb = draw_detections(
+        cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2RGB), detections
+    )
+    output = cv2.cvtColor(annotated_rgb, cv2.COLOR_RGB2BGR)
+    cv2.putText(
+        output, "LIVE", (20, 35), LABEL_FONT, 0.75,
+        (0, 220, 100), 2, cv2.LINE_AA,
+    )
+    return output
 
 
 # ============================================================
