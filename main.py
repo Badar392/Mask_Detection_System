@@ -40,6 +40,101 @@ st.set_page_config(
 
 
 # ============================================================
+# CUSTOM CSS
+# ============================================================
+
+st.html(
+    textwrap.dedent(
+    """
+    <style>
+
+    .stApp {
+        background:
+            radial-gradient(
+                circle at 20% 10%,
+                rgba(0, 200, 200, 0.08),
+                transparent 30%
+            ),
+            radial-gradient(
+                circle at 80% 20%,
+                rgba(0, 120, 255, 0.07),
+                transparent 30%
+            ),
+            #071116;
+        color: #e8f4f8;
+    }
+
+    .hero {
+        padding: 2rem 0 1rem 0;
+        text-align: center;
+    }
+
+    .hero-badge {
+        display: inline-block;
+        padding: 0.35rem 0.8rem;
+        border-radius: 20px;
+        background: rgba(0, 200, 200, 0.10);
+        border: 1px solid rgba(0, 200, 200, 0.25);
+        color: #00cccc;
+        font-size: 0.75rem;
+        font-weight: 700;
+        letter-spacing: 1px;
+        text-transform: uppercase;
+    }
+
+    .hero-title {
+        font-size: 3.5rem;
+        font-weight: 800;
+        margin: 0.6rem 0;
+        color: #e8f4f8;
+    }
+
+    .hero-title span {
+        color: #00cccc;
+    }
+
+    .hero-sub {
+        color: #6a8fa8;
+        font-size: 1rem;
+    }
+
+    .section-label {
+        color: #00cccc;
+        font-size: 0.75rem;
+        font-weight: 700;
+        letter-spacing: 1.5px;
+        text-transform: uppercase;
+        margin-bottom: 0.8rem;
+    }
+
+    .glass-card {
+        padding: 1.5rem;
+        border-radius: 18px;
+        background: rgba(255,255,255,0.025);
+        border: 1px solid rgba(255,255,255,0.08);
+    }
+
+    .status-card {
+        padding: 1rem;
+        border-radius: 14px;
+        background: rgba(0, 200, 200, 0.05);
+        border: 1px solid rgba(0, 200, 200, 0.15);
+        margin-top: 1rem;
+    }
+
+    .stImage img {
+        width: 100%;
+        max-height: 75vh;
+        object-fit: contain;
+    }
+
+    </style>
+    """
+    ),
+)
+
+
+# ============================================================
 # CONFIGURATION
 # ============================================================
 
@@ -961,8 +1056,31 @@ def process_frame(
     return output
 
 
-st.title("MaskGuard AI")
-st.caption("Face mask detection using deep learning")
+# ============================================================
+# HERO
+# ============================================================
+
+st.html(
+    textwrap.dedent(
+    """
+    <div class="hero">
+
+        <div class="hero-badge">
+            AI-Powered Detection
+        </div>
+
+        <h1 class="hero-title">
+            Mask<span>Guard</span> AI
+        </h1>
+
+        <p class="hero-sub">
+            Face mask detection using Deep Learning
+        </p>
+
+    </div>
+    """
+    ),
+)
 
 
 # ============================================================
@@ -1011,7 +1129,11 @@ if model_loaded:
 
     with tab_upload:
 
-        st.subheader("Image Detection")
+        st.html(
+            '<div class="section-label">'
+            'Image Detection'
+            '</div>',
+        )
 
         uploaded_file = st.file_uploader(
             "Upload a face image",
@@ -1056,7 +1178,11 @@ if model_loaded:
 
     with tab_webcam:
 
-        st.subheader("Webcam Capture")
+        st.html(
+            '<div class="section-label">'
+            'Live Detection'
+            '</div>',
+        )
 
         webcam_enabled = st.toggle(
             "Enable webcam",
@@ -1104,4 +1230,19 @@ if model_loaded:
                 )
 
 
-st.caption("MaskGuard AI - Face Mask Detection System")
+st.html(
+    textwrap.dedent(
+    """
+    <div style="
+        text-align:center;
+        padding:2rem 0 1rem 0;
+        color:#4a6a7e;
+        font-size:0.75rem;
+    ">
+        MaskGuard AI | Face Mask Detection System
+        <br>
+        TensorFlow | OpenCV | Streamlit
+    </div>
+    """
+    ),
+)
