@@ -1,4 +1,5 @@
 import os
+import textwrap
 
 import faulthandler
 faulthandler.enable()
@@ -35,7 +36,7 @@ from tensorflow.keras.models import load_model
 
 st.set_page_config(
     page_title="MaskGuard AI",
-    page_icon="😷",
+    page_icon="M",
     layout="wide",
     initial_sidebar_state="collapsed",
 )
@@ -64,6 +65,13 @@ st.html(
             ),
             #071116;
         color: #e8f4f8;
+    }
+
+    .block-container {
+        width: 100%;
+        max-width: 1120px;
+        padding: 1rem 2rem 2rem 2rem;
+        margin: 0 auto;
     }
 
     .hero {
@@ -126,8 +134,54 @@ st.html(
 
     .stImage img {
         width: 100%;
-        max-height: 75vh;
+        max-height: min(68vh, 620px);
         object-fit: contain;
+    }
+
+    [data-testid="stTabs"] {
+        width: 100%;
+    }
+
+    [data-testid="stFileUploader"],
+    [data-testid="stCameraInput"] {
+        width: 100%;
+    }
+
+    @media (max-width: 900px) {
+        .block-container {
+            max-width: 100%;
+            padding: 0.75rem 1rem 1.5rem 1rem;
+        }
+
+        .hero {
+            padding: 1rem 0 0.5rem 0;
+        }
+
+        .hero-title {
+            font-size: clamp(2rem, 7vw, 3rem);
+        }
+
+        .glass-card {
+            padding: 1rem;
+        }
+    }
+
+    @media (max-width: 600px) {
+        .block-container {
+            padding: 0.5rem 0.75rem 1rem 0.75rem;
+        }
+
+        .hero-title {
+            font-size: 2rem;
+        }
+
+        .hero-sub {
+            font-size: 0.9rem;
+        }
+
+        .section-label {
+            margin-top: 0.5rem;
+        }
     }
 
     </style>
@@ -1160,8 +1214,8 @@ if model_loaded:
 
     tab_upload, tab_webcam = st.tabs(
         [
-            "📤 Upload Image",
-            "🎥 Live Webcam"
+            "ðŸ“¤ Upload Image",
+            "ðŸŽ¥ Live Webcam"
         ]
     )
 
