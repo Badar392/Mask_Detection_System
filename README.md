@@ -94,18 +94,11 @@ This will launch the web interface in your browser, where you can:
 ### Live webcam notes
 
 The webcam tab keeps the camera disabled on initial load. Turn on **Enable
-webcam** before using Streamlit's
-[`st.camera_input`](https://docs.streamlit.io/develop/api-reference/widgets/st.camera_input)
-widget; turn it off again to remove the camera widget and close the active
-capture. The browser owns camera permission and captures a photo; the app processes each
-captured frame on the next Streamlit rerun, retaining short-term predictions
-for stable live labels. This is deployment-safe:
-`cv2.VideoCapture(0)` would look for a camera attached to the cloud server,
-while `st.camera_input` uses the visitor's browser camera.
-
-Click **Open webcam**, allow camera permission, and capture a photo. Captured
-images are held only in the current Streamlit session and are not uploaded to
-any external service.
+webcam** to start the browser video stream, and turn it off to stop it. The
+browser owns camera permission; frames are processed in the browser WebRTC
+stream and are not read from a server-side `cv2.VideoCapture(0)` device.
+Predictions are cached briefly per detected face to keep labels stable while
+still running the shared pipeline continuously.
 
 ### Image pipeline
 
