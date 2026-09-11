@@ -365,6 +365,14 @@ def predict_image(
     )
 
 
+def detection_status(image_rgb, face_detector):
+    boxes = detect_faces(
+        cv2.cvtColor(image_rgb, cv2.COLOR_RGB2BGR),
+        face_detector,
+    )
+    return len(boxes)
+
+
 def draw_detections(image_rgb, detections):
     image_bgr = cv2.cvtColor(image_rgb, cv2.COLOR_RGB2BGR)
     for detection in detections:
@@ -1026,7 +1034,15 @@ if model_loaded:
                 image
             )
 
+            face_count = detection_status(image_rgb, face_cascade)
             display_bgr = predict_image(image_rgb, model, face_cascade)
+            if face_count == 0:
+                st.warning(
+                    "No human face detected. Use a front-facing image with "
+                    "the face occupying at least 10% of the frame."
+                )
+            else:
+                st.success(f"Detected {face_count} human face(s); mask prediction complete.")
             display_image = cv2.cvtColor(display_bgr, cv2.COLOR_BGR2RGB)
 
             st.image(
@@ -1040,7 +1056,7 @@ if model_loaded:
 
     with tab_webcam:
 
-        st.subheader("Live Detection")
+        st.subheader("Webcam Capture")
 
         webcam_enabled = st.toggle(
             "Enable webcam",
@@ -1056,9 +1072,11 @@ if model_loaded:
             )
         else:
             st.info(
-                "Capture a webcam frame below. The captured image is passed "
+                "Streamlit's Python-only camera API captures one frame at a "
+                "time. Each captured image is passed "
                 "through the same human-face detection and mask prediction "
-                "pipeline as uploads."
+                "pipeline as uploads. Continuous live video requires a "
+                "browser JavaScript/WebRTC component."
             )
             camera_image = st.camera_input(
                 "Capture webcam frame",
@@ -1069,7 +1087,17 @@ if model_loaded:
                     Image.open(camera_image)
                 ).convert("RGB")
                 image_rgb = np.array(image)
+                face_count = detection_status(image_rgb, face_cascade)
                 display_bgr = predict_image(image_rgb, model, face_cascade)
+                if face_count == 0:
+                    st.warning(
+                        "No human face detected in this capture. Move closer, "
+                        "face the camera, and capture again."
+                    )
+                else:
+                    st.success(
+                        f"Detected {face_count} human face(s); mask prediction complete."
+                    )
                 st.image(
                     cv2.cvtColor(display_bgr, cv2.COLOR_BGR2RGB),
                     width="stretch",
