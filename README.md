@@ -94,15 +94,13 @@ This will launch the web interface in your browser, where you can:
 ### Live webcam notes
 
 The webcam tab keeps the camera disabled on initial load. Turn on **Enable
-webcam** to start the browser video stream, and turn it off to stop it. The
-browser owns camera permission; frames are processed in the browser WebRTC
-stream and are not read from a server-side `cv2.VideoCapture(0)` device.
-Predictions are cached briefly per detected face to keep labels stable while
-still running the shared pipeline continuously.
+webcam** to open the browser camera, capture a frame, and process it. The
+browser owns camera permission; images are captured in the browser and are not
+read from a server-side `cv2.VideoCapture(0)` device.
 
 ### Image pipeline
 
-Both uploaded images and browser-camera frames use the same pipeline:
+Both uploaded images and browser-camera captures use the same pipeline:
 
 1. Enhance local contrast with CLAHE and apply gentle unsharp sharpening.
 2. Detect faces on the enhanced image and add a small context margin.

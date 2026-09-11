@@ -16,7 +16,6 @@ import textwrap
 
 import streamlit as st
 import cv2
-import av
 
 cv2.setNumThreads(1)
 
@@ -28,7 +27,6 @@ from collections import deque
 
 from tensorflow.keras.models import load_model
 from mask_pipeline import process_frame as shared_process_frame
-from streamlit_webrtc import VideoProcessorBase, WebRtcMode, webrtc_streamer
 
 
 # ============================================================
@@ -871,30 +869,6 @@ def detect_and_annotate(
     return annotated
 
 
-class MaskVideoProcessor(VideoProcessorBase):
-    """Apply the same synchronous pipeline to every browser video frame."""
-
-    def __init__(self, model, face_cascade):
-        self.model = model
-        self.face_cascade = face_cascade
-        self.history = {}
-        self.cached_predictions = {}
-        self.frame_counter = 0
-
-    def recv(self, frame):
-        self.frame_counter += 1
-        image_bgr = frame.to_ndarray(format="bgr24")
-        output = shared_process_frame(
-            image_bgr,
-            self.model,
-            self.face_cascade,
-            self.history,
-            self.cached_predictions,
-            self.frame_counter,
-        )
-        return av.VideoFrame.from_ndarray(output, format="bgr24")
-
-
 # ============================================================
 # HERO
 # ============================================================
@@ -1021,29 +995,36 @@ if model_loaded:
             "Enable webcam",
             value=False,
             key="webcam_enabled",
-            help="Allow the browser camera to stream frames for detection.",
+            help="Allow the browser camera to capture a frame for detection.",
         )
 
         if not webcam_enabled:
+            st.session_state.pop("webcam_capture", None)
             st.info(
                 "Webcam is off. Enable it above when you are ready "
-                "to start live detection."
+                "to take a photo."
             )
         else:
             st.info(
-                "Frames stay in your browser session and are processed "
+                "The browser camera captures a frame. It is processed "
                 "through the same enhancement, letterbox, inference, and "
                 "annotation pipeline as uploaded images."
             )
-            webrtc_streamer(
-                key="mask-detection-camera",
-                mode=WebRtcMode.SENDRECV,
-                video_processor_factory=lambda: MaskVideoProcessor(
-                    model, face_cascade
-                ),
-                media_stream_constraints={"video": True, "audio": False},
-                async_processing=True,
+            camera_image = st.camera_input(
+                "Open webcam",
+                key="webcam_capture",
             )
+
+            if camera_image is not None:
+                image = ImageOps.exif_transpose(
+                    Image.open(camera_image)
+                ).convert("RGB")
+                image_rgb = np.array(image)
+                display_bgr = predict_image(image_rgb, model, face_cascade)
+                st.image(
+                    cv2.cvtColor(display_bgr, cv2.COLOR_BGR2RGB),
+                    width="stretch",
+                )
 
 
 # ============================================================
