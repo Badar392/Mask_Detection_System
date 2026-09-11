@@ -20,10 +20,6 @@ from pathlib import Path
 import streamlit as st
 import cv2
 import streamlit.components.v1 as components
-try:
-    import mediapipe as mp
-except ImportError:
-    mp = None
 
 cv2.setNumThreads(1)
 
@@ -168,6 +164,7 @@ st.html(
 IMG_SIZE = (160, 160)
 
 MODEL_PATH = "face_mask_detector.keras"
+FACE_DETECTOR_PATH = "face_detection_yunet_2023mar.onnx"
 
 CLASS_NAMES = [
     "WithMask",
@@ -256,13 +253,17 @@ def load_face_cascade():
 
 @st.cache_resource(show_spinner=False)
 def load_face_detector():
-    """Use a trained detector that remains reliable when a mask occludes the face."""
-    if mp is None or not hasattr(mp, "solutions"):
-        return load_face_cascade()
-    return mp.solutions.face_detection.FaceDetection(
-        model_selection=1,
-        min_detection_confidence=0.35,
-    )
+    """Load a headless-compatible DNN detector, with Haar as a fallback."""
+    if hasattr(cv2, "FaceDetectorYN") and os.path.exists(FACE_DETECTOR_PATH):
+        return cv2.FaceDetectorYN.create(
+            FACE_DETECTOR_PATH,
+            "",
+            (320, 320),
+            0.35,
+            0.3,
+            5000,
+        )
+    return load_face_cascade()
 
 
 # ============================================================
@@ -340,24 +341,14 @@ def predict_face(model, face_bgr):
 
 
 def detect_faces(image_bgr, face_detector):
-    if hasattr(face_detector, "process"):
+    if hasattr(face_detector, "detect"):
         height, width = image_bgr.shape[:2]
-        original_rgb = cv2.cvtColor(image_bgr, cv2.COLOR_BGR2RGB)
-        result = face_detector.process(original_rgb)
-        if not result.detections:
-            # Enhancement is for the classifier; run the detector on natural
-            # pixels first because its model was trained on natural images.
-            result = face_detector.process(
-                cv2.cvtColor(enhance_image(image_bgr), cv2.COLOR_BGR2RGB)
-            )
-        if result.detections:
+        face_detector.setInputSize((width, height))
+        _, faces = face_detector.detect(image_bgr)
+        if faces is not None and len(faces):
             detections = []
-            for detection in result.detections:
-                box = detection.location_data.relative_bounding_box
-                x = round(box.xmin * width)
-                y = round(box.ymin * height)
-                box_width = round(box.width * width)
-                box_height = round(box.height * height)
+            for face in faces:
+                x, y, box_width, box_height = np.rint(face[:4]).astype(int)
                 x1 = max(0, x)
                 y1 = max(0, y)
                 x2 = min(width, x + box_width)
