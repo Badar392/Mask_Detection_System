@@ -49,6 +49,9 @@ function render(event) {
   video().height = args.height;
   button().onclick = () => (running ? stop() : start());
   Streamlit.setFrameHeight(args.height + 80);
+  if (!running && !stream) {
+    start();
+  }
 }
 
 Streamlit.events.addEventListener(Streamlit.RENDER_EVENT, render);
