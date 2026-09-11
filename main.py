@@ -20,6 +20,10 @@ from pathlib import Path
 import streamlit as st
 import cv2
 import streamlit.components.v1 as components
+try:
+    import mediapipe as mp
+except ImportError:
+    mp = None
 
 cv2.setNumThreads(1)
 
@@ -250,6 +254,17 @@ def load_face_cascade():
     return cascade
 
 
+@st.cache_resource(show_spinner=False)
+def load_face_detector():
+    """Use a trained detector that remains reliable when a mask occludes the face."""
+    if mp is None or not hasattr(mp, "solutions"):
+        return load_face_cascade()
+    return mp.solutions.face_detection.FaceDetection(
+        model_selection=1,
+        min_detection_confidence=0.35,
+    )
+
+
 # ============================================================
 # SHARED IMAGE PREPROCESSING AND INFERENCE
 # ============================================================
@@ -324,7 +339,45 @@ def predict_face(model, face_bgr):
     return float(prediction[0][0])
 
 
-def detect_faces(image_bgr, face_cascade):
+def detect_faces(image_bgr, face_detector):
+    if hasattr(face_detector, "process"):
+        height, width = image_bgr.shape[:2]
+        original_rgb = cv2.cvtColor(image_bgr, cv2.COLOR_BGR2RGB)
+        result = face_detector.process(original_rgb)
+        if not result.detections:
+            # Enhancement is for the classifier; run the detector on natural
+            # pixels first because its model was trained on natural images.
+            result = face_detector.process(
+                cv2.cvtColor(enhance_image(image_bgr), cv2.COLOR_BGR2RGB)
+            )
+        if result.detections:
+            detections = []
+            for detection in result.detections:
+                box = detection.location_data.relative_bounding_box
+                x = round(box.xmin * width)
+                y = round(box.ymin * height)
+                box_width = round(box.width * width)
+                box_height = round(box.height * height)
+                x1 = max(0, x)
+                y1 = max(0, y)
+                x2 = min(width, x + box_width)
+                y2 = min(height, y + box_height)
+                if x2 > x1 and y2 > y1:
+                    pad = round(max(x2 - x1, y2 - y1) * 0.20)
+                    detections.append({
+                        "display_box": (x1, y1, x2, y2),
+                        "crop_box": (
+                            max(0, x1 - pad),
+                            max(0, y1 - pad),
+                            min(width, x2 + pad),
+                            min(height, y2 + pad),
+                        ),
+                    })
+            if detections:
+                return detections
+        return []
+
+    # Compatibility fallback for callers/tests that provide an OpenCV cascade.
     enhanced = enhance_image(image_bgr)
     candidates = []
     gray_images = (
@@ -338,7 +391,7 @@ def detect_faces(image_bgr, face_cascade):
                 detection_image = cv2.resize(
                     gray, None, fx=scale, fy=scale, interpolation=cv2.INTER_CUBIC
                 )
-            detected = face_cascade.detectMultiScale(
+            detected = face_detector.detectMultiScale(
                 detection_image,
                 scaleFactor=1.05,
                 minNeighbors=3,
@@ -1125,9 +1178,7 @@ with st.spinner("Loading AI model..."):
 
         model = load_mask_model()
 
-        face_cascade = (
-            load_face_cascade()
-        )
+        face_cascade = load_face_detector()
 
         model_loaded = True
 
