@@ -15,6 +15,8 @@ os.environ["OPENBLAS_NUM_THREADS"] = "1"
 
 import streamlit as st
 import cv2
+import av
+from streamlit_webrtc import VideoProcessorBase, WebRtcMode, webrtc_streamer
 
 cv2.setNumThreads(1)
 
@@ -1076,6 +1078,30 @@ def process_frame(
 # HERO
 # ============================================================
 
+class MaskVideoProcessor(VideoProcessorBase):
+    """Run human-face detection and mask classification on WebRTC frames."""
+
+    def __init__(self, model, face_detector):
+        self.model = model
+        self.face_detector = face_detector
+        self.history = {}
+        self.predictions = {}
+        self.frame_counter = 0
+
+    def recv(self, frame):
+        self.frame_counter += 1
+        image_bgr = frame.to_ndarray(format="bgr24")
+        annotated = process_frame(
+            image_bgr,
+            self.model,
+            self.face_detector,
+            self.history,
+            self.predictions,
+            self.frame_counter,
+        )
+        return av.VideoFrame.from_ndarray(annotated, format="bgr24")
+
+
 st.html(
     textwrap.dedent(
     """
@@ -1214,36 +1240,21 @@ if model_loaded:
             )
         else:
             st.info(
-                "Streamlit's Python-only camera API captures one frame at a "
-                "time. Each captured image is passed "
-                "through the same human-face detection and mask prediction "
-                "pipeline as uploads. Continuous live video requires a "
-                "browser JavaScript/WebRTC component."
+                "Live browser video is processed directly in memory. "
+                "No snapshots or intermediate image files are saved."
             )
-            camera_image = st.camera_input(
-                "Capture webcam frame",
-                key="webcam_capture",
+            webrtc_streamer(
+                key="maskguard-live-camera",
+                mode=WebRtcMode.SENDRECV,
+                video_processor_factory=lambda: MaskVideoProcessor(
+                    model, face_cascade
+                ),
+                media_stream_constraints={
+                    "video": {"facingMode": "user"},
+                    "audio": False,
+                },
+                async_processing=True,
             )
-            if camera_image is not None:
-                image = ImageOps.exif_transpose(
-                    Image.open(camera_image)
-                ).convert("RGB")
-                image_rgb = np.array(image)
-                face_count = detection_status(image_rgb, face_cascade)
-                display_bgr = predict_image(image_rgb, model, face_cascade)
-                if face_count == 0:
-                    st.warning(
-                        "No human face detected in this capture. Move closer, "
-                        "face the camera, and capture again."
-                    )
-                else:
-                    st.success(
-                        f"Detected {face_count} human face(s); mask prediction complete."
-                    )
-                st.image(
-                    cv2.cvtColor(display_bgr, cv2.COLOR_BGR2RGB),
-                    width="stretch",
-                )
 
 
 st.html(
