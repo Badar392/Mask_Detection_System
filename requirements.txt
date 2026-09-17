@@ -10,5 +10,11 @@ streamlit-webrtc==0.77.0
 aiortc==1.15.0
 pylibsrtp==1.0.0
 av==17.0.0
+requests==2.32.3
+
+# Only needed if you use the Twilio TURN provider in get_ice_servers().
+# Cloudflare/Metered/ExpressTURN use `requests` above instead - skip this
+# line if you're not using Twilio.
+twilio==9.3.7
 
 pyarrow<25.0.0
